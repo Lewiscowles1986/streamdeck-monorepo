@@ -20,6 +20,7 @@ Status: **2026-09-19** — all rows implemented and regression-tested.
 | P7 | `GET /device/{id}/config` returns camelCase device fields (`currentConfigId`, `activeAgentId`) like every other endpoint. | `test_device_config_endpoint_dialect` |
 | P8 | Action `timeout` is configurable in the UI and honored by the agent executor. | covered by P1 tests + CommandAction schema |
 | P9 | All 8 vendored deck types render a grid in the UI, in both name dialects (kebab ids + human names like "Stream Deck XL"), with a safe fallback for unknown types. | `deviceDimensions()` + `deviceTypeLabel()` helpers; exercised by E2E |
+| P10 | Animated and static images the UI embeds as `data:` URIs (`FileReader.readAsDataURL`) are rendered by the runner through `render_key_image`, which decodes each animation frame once into an `itertools.cycle` cached in `persistent_images` keyed by the full source string — the same source on multiple buttons shares one decode and one cycle. The 30fps `animate` loop (`FRAMES_PER_SECOND`) pushes frames per button via `persistent_image_buttons`. | `test_animated_data_uri_from_frontend_pipeline_decodes_to_frames`, `test_animated_data_uri_is_shared_between_buttons`; E2E `parity-demo`/`parity-fullstack` GIF specs |
 
 ## Backend-only surface, intentionally device/agent-facing (no UI by design)
 
@@ -88,3 +89,4 @@ Captured during the parity pass (see `docs/screenshots/`):
 | ![Full-stack dashboard](screenshots/fullstack-dashboard.png) | Real API (dummy transport): device cards render human-name types ("Stream Deck Original", "Stream Deck Mini") with Device ID / Nominated Agent fields and Nominate / Assign actions. |
 | ![Full-stack agents page](screenshots/fullstack-agents.png) | The Agents page talking to the live API — registered computer (hostname / user / platform / status) and per-device nomination for every dummy deck. |
 | ![Action editor with Exit](screenshots/action-editor-exit.png) | The config editor **Action** tab offering "Exit (shut down the runner)" alongside "Command" — the P3 surface. |
+| ![GIF upload with badge](screenshots/upload-gif-badge.png) | Animated-GIF upload (P10): preview thumbnail on the grid button, **GIF** badge on the idle image, unsaved-changes state — verified by E2E and by the runner's frame-decode tests. |

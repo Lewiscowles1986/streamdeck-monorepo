@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 
 import pytest
 
@@ -352,3 +353,48 @@ def test_device_config_endpoint_dialect(client):
     dev = payload["device"]
     assert dev["currentConfigId"] == config["id"]
     assert dev["activeAgentId"] == "a1"
+
+
+# ---------------------------------------------------------------
+# Animated GIF data URIs: the UI embeds animated GIFs exactly as
+# FileReader.readAsDataURL produces them; the runner must decode
+# every frame once and hand back a cycle (see persistent_images).
+# ---------------------------------------------------------------
+def test_animated_data_uri_from_frontend_pipeline_decodes_to_frames(dummy_deck):
+    import base64
+    from pathlib import Path
+
+    gif_bytes = (
+        Path(__file__).resolve().parents[1] / "e2e" / "assets" / "red-blue.gif"
+    ).read_bytes()
+    source = f"data:image/gif;base64,{base64.b64encode(gif_bytes).decode('ascii')}"
+
+    rendered = runner.render_key_image(dummy_deck, source)
+    assert isinstance(rendered, Iterator), (
+        "an animated data URI must render as a frame iterator (cycle)"
+    )
+    assert rendered is runner.persistent_images[source], (
+        "the cycle must be cached per source string"
+    )
+
+    first, second = next(rendered), next(rendered)
+    assert isinstance(first, bytes) and len(first) > 0
+    assert isinstance(second, bytes) and len(second) > 0
+    # red frame vs blue frame: distinctness proves a multi-frame decode
+    assert first != second
+
+
+def test_animated_data_uri_is_shared_between_buttons(dummy_deck):
+    """Same source string on two buttons → one decode, one shared cycle."""
+    import base64
+    from pathlib import Path
+
+    gif_bytes = (
+        Path(__file__).resolve().parents[1] / "e2e" / "assets" / "red-blue.gif"
+    ).read_bytes()
+    source = f"data:image/gif;base64,{base64.b64encode(gif_bytes).decode('ascii')}"
+
+    from_button_1 = runner.render_key_image(dummy_deck, source)
+    from_button_2 = runner.render_key_image(dummy_deck, source)
+    assert from_button_1 is from_button_2
+    assert runner.persistent_images[source] is from_button_1

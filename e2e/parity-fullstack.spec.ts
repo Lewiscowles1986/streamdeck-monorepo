@@ -1,8 +1,12 @@
-import { test, expect } from "@playwright/test";
+import path from "node:path";
+
+import { test, expect, type Page } from "@playwright/test";
 
 /**
  * Full-stack parity specs — the real API's dialect as seen by the UI.
- * Locks the frontend half of docs/parity.md against the backend.
+ * Locks the frontend half of docs/parity.md against the backend,
+ * including the animated-GIF path persisting data URIs end-to-end
+ * through PUT /config/{id} and GET /config/{id}.
  */
 
 test.describe("full-stack parity", () => {
@@ -54,5 +58,61 @@ test.describe("full-stack parity", () => {
     // Back to devices: the card must show "None assigned" (P4 regression).
     await page.getByRole("link", { name: /devices/i }).click();
     await expect(page.getByText(/none assigned/i).first()).toBeVisible();
+  });
+});
+
+// ---------------------------------------------------------------
+// Animated GIF over the real API: upload in the UI, save with PUT
+// /config/{id}, survive a reload, and round-trip the data URI
+// through GET /config/{id} — the format the runner decodes per frame.
+// ---------------------------------------------------------------
+const RED_BLUE_GIF = path.resolve(__dirname, "assets", "red-blue.gif");
+
+async function createConfigAndOpenButton1(page: Page, name: string) {
+  await page.goto("/");
+  await page.waitForLoadState("networkidle");
+  await page.getByRole("link", { name: /configurations/i }).click();
+  await page.getByRole("button", { name: /new config/i }).click();
+  await page.getByPlaceholder(/my gaming layout/i).fill(name);
+  await page.getByRole("button", { name: /^create$/i }).click();
+  await expect(page.getByText(/visual editor/i).first()).toBeVisible();
+  await page.locator(".streamdeck-button").first().click();
+}
+
+test.describe("full-stack parity: animated GIF over the real API", () => {
+  test("uploaded GIF persists through save, reload, and the real API", async ({
+    page,
+  }) => {
+    const configName = `GIF API E2E ${Date.now()}`;
+    await createConfigAndOpenButton1(page, configName);
+    await page.locator('input[type="file"]').setInputFiles(RED_BLUE_GIF);
+    await expect(page.getByAltText("Button preview")).toBeVisible();
+    await expect(page.getByText("GIF", { exact: true })).toBeVisible();
+
+    // The toast fires only in onSuccess — i.e. after PUT /config/{id}
+    // has committed. Waiting for it (instead of the disabled state, which
+    // is also true while pending) removes the reload/write race. .first()
+    // because the aria-live viewport span wraps the same text.
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    await page.reload();
+    await page.locator(".streamdeck-button").first().click();
+    await expect(page.getByAltText("Button preview")).toBeVisible();
+    await expect(page.getByText("GIF", { exact: true })).toBeVisible();
+
+    // Round-trip: the saved body must carry the data URI the runner consumes.
+    // NOTE: page.request is scoped to baseURL (:8081, the SPA server whose
+    // catch-all returns index.html) — the API lives on :8000, so use the
+    // absolute URL.
+    const configId = page.url().split("/").filter(Boolean).pop();
+    expect(configId, "URL must end in the config id").toBeTruthy();
+    const response = await page.request.get(`http://localhost:8000/config/${configId}`);
+    expect(response.ok()).toBeTruthy();
+    const body = await response.text();
+    expect(body).toContain("data:image/gif;base64,");
+    expect(body).toContain(`"name":"${configName}"`);
   });
 });
