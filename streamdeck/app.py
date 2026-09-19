@@ -27,7 +27,7 @@ app = FastAPI(
     ),
 )
 
-origins = ["http://localhost:8080", "*"]
+origins = ["http://localhost:8080", "http://localhost:8081", "*"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -171,14 +171,19 @@ def get_assigned_config(device_id: str):
         device = session.get(StreamDeckDevice, device_id)
         if not device:
             raise HTTPException(status_code=404, detail="Device not found")
+        # Serialize by alias so the device dialect matches every other
+        # endpoint (camelCase: currentConfigId, activeAgentId). Readers
+        # tolerate the snake_case spelling too, but the wire contract is
+        # aliased per the API dialect.
+        device_json = json.loads(device.model_dump_json(by_alias=True))
         if not device.current_config_id:
-            return {"config": None, "device": json.loads(device.model_dump_json())}
+            return {"config": None, "device": device_json}
         config = session.get(StreamDeckConfig, device.current_config_id)
         if not config:
-            return {"config": None, "device": json.loads(device.model_dump_json())}
+            return {"config": None, "device": device_json}
         return {
-            "config": json.loads(config.model_dump_json()),
-            "device": json.loads(device.model_dump_json()),
+            "config": json.loads(config.model_dump_json(by_alias=True)),
+            "device": device_json,
         }
 
 
@@ -209,6 +214,11 @@ def delete_config(config_id: str):
         config = session.get(StreamDeckConfig, config_id)
         if not config:
             raise HTTPException(status_code=404, detail="Configuration not found")
+        # The dashboard reads current_config_id from device rows; leaving a
+        # deleted config id there would surface a dead link in the UI.
+        for device in session.query(StreamDeckDevice).all():
+            if device.current_config_id == config_id:
+                device.current_config_id = None
         session.delete(config)
         session.commit()
         return config

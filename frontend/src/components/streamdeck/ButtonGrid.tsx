@@ -1,6 +1,6 @@
 import { ButtonCell } from "./ButtonCell";
 import type { ButtonConfig, DeviceType } from "@/types/streamdeck";
-import { DEVICE_DIMENSIONS } from "@/types/streamdeck";
+import { deviceDimensions } from "@/types/streamdeck";
 
 interface ButtonGridProps {
   deviceType?: DeviceType;
@@ -15,7 +15,7 @@ export function ButtonGrid({
   selectedIndex,
   onSelectButton,
 }: ButtonGridProps) {
-  const dimensions = DEVICE_DIMENSIONS[deviceType];
+  const dimensions = deviceDimensions(deviceType);
   const totalButtons = dimensions.rows * dimensions.cols;
 
   return (

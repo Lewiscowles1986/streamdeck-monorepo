@@ -11,21 +11,13 @@
  *   agentsApi.getAll/delete/nominate (agents are part of this port)
  */
 
-import type { Device, StreamDeckConfig, ButtonAction } from "@/types/streamdeck";
+import type { Device, StreamDeckConfig, ButtonAction, Agent } from "@/types/streamdeck";
 
 const LS_DEVICES = "streamdeck_demo_devices";
 const LS_CONFIGS = "streamdeck_demo_configs";
 const LS_AGENTS = "streamdeck_demo_agents";
 
 export const DEMO_DEVICE_ID = "demo-deck-xl-001";
-
-interface Agent {
-  id: string;
-  hostname: string;
-  user?: string | null;
-  platform?: string | null;
-  connected: boolean;
-}
 
 function read<T>(key: string, fallback: T): T {
   try {
@@ -48,11 +40,12 @@ function uuid(): string {
   return `demo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-// Seed devices so a fresh demo has something to look at.
+// Seed devices so a fresh demo has something to look at. Types use the
+// human names the real API returns from the vendored core's DECK_TYPE.
 const DEFAULT_DEVICES: Device[] = [
   {
     id: DEMO_DEVICE_ID,
-    type: "stream-deck-xl",
+    type: "Stream Deck XL",
     name: "Stream Deck XL (demo) - 000000000001",
     connected: true,
     currentConfigId: undefined,
@@ -60,7 +53,7 @@ const DEFAULT_DEVICES: Device[] = [
   },
   {
     id: "demo-deck-mk2-002",
-    type: "stream-deck-mk2",
+    type: "Stream Deck MK.2",
     name: "Stream Deck MK.2 (demo) - 000000000002",
     connected: true,
     currentConfigId: undefined,
@@ -74,7 +67,8 @@ const DEFAULT_AGENTS: Agent[] = [
     hostname: "studio-mac.local",
     user: "you",
     platform: "macOS",
-    connected: true,
+    active: true,
+    last_seen: new Date().toISOString(),
   },
 ];
 
@@ -164,11 +158,11 @@ export const demoConfigsApi = {
   async create(config: Omit<StreamDeckConfig, "id">): Promise<StreamDeckConfig> {
     await delay();
     const configs = read<StreamDeckConfig[]>(LS_CONFIGS, []);
+    // Mirror the real API: id is server-generated; no createdAt/updatedAt
+    // columns exist on the backend model.
     const created: StreamDeckConfig = {
       ...config,
       id: uuid(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
     };
     write(LS_CONFIGS, [created, ...configs]);
     return created;
@@ -180,15 +174,20 @@ export const demoConfigsApi = {
   ): Promise<StreamDeckConfig> {
     await delay();
     const configs = read<StreamDeckConfig[]>(LS_CONFIGS, []);
-    const updated = configs.map((c) =>
-      c.id === configId
-        ? { ...c, ...config, updatedAt: new Date().toISOString() }
-        : c
-    );
+    // Real PUT /config/{id} replaces name/deviceType/buttons wholesale;
+    // a partial body would be rejected (422). Emulate the same contract:
+    // only fields present on the payload are kept, merged over nothing.
+    const target = configs.find((c) => c.id === configId);
+    if (!target) throw new Error("Configuration not found");
+    const replaced: StreamDeckConfig = {
+      id: configId,
+      name: config.name ?? target.name,
+      deviceType: config.deviceType ?? config.device_type ?? target.deviceType ?? target.device_type,
+      buttons: config.buttons ?? target.buttons ?? [],
+    };
+    const updated = configs.map((c) => (c.id === configId ? replaced : c));
     write(LS_CONFIGS, updated);
-    const found = updated.find((c) => c.id === configId);
-    if (!found) throw new Error("Configuration not found");
-    return found;
+    return replaced;
   },
 
   async delete(configId: string): Promise<void> {

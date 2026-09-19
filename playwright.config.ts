@@ -33,6 +33,21 @@ export default defineConfig({
         baseURL: `http://localhost:${PORT_FULLSTACK_UI}`,
       },
     },
+    {
+      // Parity regression specs (agents UI, exit action, labels) — demo mock
+      name: "parity-demo",
+      testMatch: /parity-demo\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${PORT_UI}` },
+    },
+    {
+      // Parity regression specs against the real API (dialect, dangling refs)
+      name: "parity-fullstack",
+      testMatch: /parity-fullstack\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        baseURL: `http://localhost:${PORT_FULLSTACK_UI}`,
+      },
+    },
   ],
   webServer: [
     {

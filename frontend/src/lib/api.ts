@@ -1,8 +1,9 @@
-import type { Device, StreamDeckConfig } from "@/types/streamdeck";
+import type { Device, StreamDeckConfig, Agent } from "@/types/streamdeck";
 import {
   isDemoMode,
   demoDevicesApi,
   demoConfigsApi,
+  demoAgentsApi,
   testDemoConnection,
 } from "@/lib/demo-api";
 
@@ -56,21 +57,44 @@ export const devicesApi = {
   
   assignConfig: (deviceId: string, configId: string) =>
     fetchApi<void>(`/device/${deviceId}/config/${configId}`, { method: "PUT" }),
+
+  // The config currently assigned to a device (what the device runner loads).
+  getAssignedConfig: (deviceId: string) =>
+    fetchApi<{ config: StreamDeckConfig | null; device: Device }>(
+      `/device/${deviceId}/config`
+    ),
+
+  // Nominate a computer to execute this device's command actions.
+  nominateAgent: (deviceId: string, agentId: string) =>
+    fetchApi<Device>(`/device/${deviceId}/agent/${agentId}`, { method: "PUT" }),
+
+  // Fall back to local execution (clears the nomination).
+  clearAgent: (deviceId: string) =>
+    fetchApi<Device>(`/device/${deviceId}/agent`, { method: "DELETE" }),
+};
+
+// Agent endpoints (nominate-a-computer). NOTE the dialect: the Agent model
+// has no camelCase aliases — snake_case on the wire.
+export const agentsApi = {
+  getAll: () => fetchApi<Agent[]>("/agents"),
+
+  delete: (agentId: string) =>
+    fetchApi<Agent>(`/agents/${agentId}`, { method: "DELETE" }),
 };
 
 // Config endpoints
 export const configsApi = {
   getAll: () => fetchApi<StreamDeckConfig[]>("/configs"),
-  
+
   getById: (configId: string) => fetchApi<StreamDeckConfig>(`/config/${configId}`),
-  
+
   create: (config: Omit<StreamDeckConfig, "id">) =>
     fetchApi<StreamDeckConfig>("/config", {
       method: "POST",
       body: JSON.stringify(config),
     }),
   
-  update: (configId: string, config: Partial<StreamDeckConfig>) =>
+  update: (configId: string, config: StreamDeckConfig) =>
     fetchApi<StreamDeckConfig>(`/config/${configId}`, {
       method: "PUT",
       body: JSON.stringify(config),
@@ -106,6 +130,18 @@ async function demoFetch<T>(endpoint: string, options?: RequestInit): Promise<T>
   if (parts[0] === "devices" && method === "GET") {
     return demoDevicesApi.getAll() as unknown as T;
   }
+  // /device/:id/config (runner-facing: what will this deck run)
+  if (parts[0] === "device" && parts[2] === "config" && method === "GET") {
+    const devices = await demoDevicesApi.getAll();
+    const device = devices.find((d) => d.id === parts[1]);
+    if (!device) notFound();
+    const configs = await demoConfigsApi.getAll();
+    const assignedId = device.currentConfigId ?? device.current_config_id;
+    const config = assignedId
+      ? (configs.find((c) => c.id === assignedId) ?? null)
+      : null;
+    return { config, device } as unknown as T;
+  }
   // /device/:id/config/:configId
   if (parts[0] === "device" && parts[2] === "config" && method === "PUT") {
     await demoDevicesApi.assignConfig(parts[1], parts[3]);
@@ -114,6 +150,19 @@ async function demoFetch<T>(endpoint: string, options?: RequestInit): Promise<T>
   // /device/:id/agent/:agentId
   if (parts[0] === "device" && parts[2] === "agent" && method === "PUT") {
     await demoDevicesApi.nominateAgent(parts[1], parts[3]);
+    return {} as T;
+  }
+  // /device/:id/agent (clear nomination)
+  if (parts[0] === "device" && parts[2] === "agent" && method === "DELETE") {
+    await demoDevicesApi.nominateAgent(parts[1], null);
+    return {} as T;
+  }
+  // /agents (list) and /agents/:id (delete)
+  if (parts[0] === "agents" && method === "GET") {
+    return demoAgentsApi.getAll() as unknown as T;
+  }
+  if (parts[0] === "agents" && method === "DELETE" && parts[1]) {
+    await demoAgentsApi.delete(parts[1]);
     return {} as T;
   }
   // /configs, /config, /config/:id

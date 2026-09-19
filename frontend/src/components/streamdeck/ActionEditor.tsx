@@ -99,10 +99,14 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
       <div className="space-y-2">
         <Label>Action Type</Label>
         <Select
-          value={action ? "command" : "none"}
+          value={action?.type === "exit" ? "exit" : action ? "command" : "none"}
           onValueChange={(value) => {
             if (value === "none") {
               onChange(null);
+            } else if (value === "exit") {
+              // The runner treats a bare-string/exit action as the shutdown
+              // button; represented as {"type": "exit"} in the config JSON.
+              onChange({ type: "exit" });
             } else {
               updateCommand({});
             }
@@ -114,9 +118,17 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
           <SelectContent>
             <SelectItem value="none">No Action</SelectItem>
             <SelectItem value="command">Command</SelectItem>
+            <SelectItem value="exit">Exit (shut down the runner)</SelectItem>
           </SelectContent>
         </Select>
       </div>
+
+      {action?.type === "exit" && (
+        <p className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-muted-foreground">
+          Pressing this button stops the Stream Deck runner and closes the
+          connection. Use it as an emergency off-switch.
+        </p>
+      )}
 
       {commandAction && (
         <>
@@ -154,6 +166,24 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
               onChange={(e) => updateCommand({ cwd: e.target.value })}
               placeholder="/path/to/directory"
             />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>Timeout (seconds)</Label>
+            </div>
+            <Input
+              type="number"
+              value={commandAction.timeout ?? 30}
+              onChange={(e) =>
+                updateCommand({ timeout: parseInt(e.target.value) || 30 })
+              }
+              min={1}
+              max={600}
+            />
+            <p className="text-xs text-muted-foreground">
+              The agent kills the command after this many seconds (default 30).
+            </p>
           </div>
 
           <div className="space-y-2">

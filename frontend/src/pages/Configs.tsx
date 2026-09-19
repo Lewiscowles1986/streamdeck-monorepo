@@ -25,7 +25,6 @@ import { configsApi } from "@/lib/api";
 import { useApi } from "@/contexts/ApiContext";
 import { TryDemoButton } from "@/components/streamdeck/DemoBanner";
 import type { StreamDeckConfig, DeviceType } from "@/types/streamdeck";
-import { DEVICE_DIMENSIONS } from "@/types/streamdeck";
 
 const DEVICE_TYPES: { value: DeviceType; label: string }[] = [
   { value: "stream-deck-xl", label: "Stream Deck XL (8×4)" },
@@ -33,6 +32,9 @@ const DEVICE_TYPES: { value: DeviceType; label: string }[] = [
   { value: "stream-deck-mk2", label: "Stream Deck MK.2 (5×3)" },
   { value: "stream-deck-mini", label: "Stream Deck Mini (3×2)" },
   { value: "stream-deck-plus", label: "Stream Deck + (4×2)" },
+  { value: "stream-deck-neo", label: "Stream Deck Neo (4×2)" },
+  { value: "stream-deck-pedal", label: "Stream Deck Pedal (3×1)" },
+  { value: "stream-deck-studio", label: "Stream Deck Studio (16×2)" },
 ];
 
 export default function Configs() {
@@ -83,7 +85,6 @@ export default function Configs() {
 
   const handleCreate = () => {
     if (!newConfigName.trim()) return;
-    const dimensions = DEVICE_DIMENSIONS[newConfigDeviceType];
     createMutation.mutate({
       name: newConfigName.trim(),
       deviceType: newConfigDeviceType,

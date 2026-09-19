@@ -18,10 +18,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { devicesApi, configsApi } from "@/lib/api";
+import { devicesApi, configsApi, agentsApi } from "@/lib/api";
 import { useApi } from "@/contexts/ApiContext";
 import { TryDemoButton } from "@/components/streamdeck/DemoBanner";
-import type { Device, StreamDeckConfig } from "@/types/streamdeck";
+import type { Device, StreamDeckConfig, Agent } from "@/types/streamdeck";
 
 export default function Dashboard() {
   const { isConnected } = useApi();
@@ -30,6 +30,8 @@ export default function Dashboard() {
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [selectedConfigId, setSelectedConfigId] = useState<string>("");
+  const [nominateDialogOpen, setNominateDialogOpen] = useState(false);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
 
   const {
     data: devices = [],
@@ -48,6 +50,12 @@ export default function Dashboard() {
     enabled: isConnected,
   });
 
+  const { data: agents = [] } = useQuery({
+    queryKey: ["agents"],
+    queryFn: agentsApi.getAll,
+    enabled: isConnected,
+  });
+
   const assignMutation = useMutation({
     mutationFn: ({ deviceId, configId }: { deviceId: string; configId: string }) =>
       devicesApi.assignConfig(deviceId, configId),
@@ -61,15 +69,51 @@ export default function Dashboard() {
     },
   });
 
+  const nominateMutation = useMutation({
+    mutationFn: ({ deviceId, agentId }: { deviceId: string; agentId: string }) =>
+      devicesApi.nominateAgent(deviceId, agentId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+      toast({ title: "Agent nominated", description: "Command actions on this device will run on the nominated computer." });
+      setNominateDialogOpen(false);
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: String(error), variant: "destructive" });
+    },
+  });
+
+  const clearAgentMutation = useMutation({
+    mutationFn: (deviceId: string) => devicesApi.clearAgent(deviceId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+      toast({ title: "Agent cleared", description: "Command actions will run locally again." });
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: String(error), variant: "destructive" });
+    },
+  });
+
   const handleAssignConfig = (deviceId: string) => {
     setSelectedDeviceId(deviceId);
     setSelectedConfigId("");
     setAssignDialogOpen(true);
   };
 
+  const handleNominateAgent = (deviceId: string) => {
+    setSelectedDeviceId(deviceId);
+    setSelectedAgentId("");
+    setNominateDialogOpen(true);
+  };
+
   const handleConfirmAssign = () => {
     if (selectedDeviceId && selectedConfigId) {
       assignMutation.mutate({ deviceId: selectedDeviceId, configId: selectedConfigId });
+    }
+  };
+
+  const handleConfirmNominate = () => {
+    if (selectedDeviceId && selectedAgentId) {
+      nominateMutation.mutate({ deviceId: selectedDeviceId, agentId: selectedAgentId });
     }
   };
 
@@ -135,10 +179,57 @@ export default function Dashboard() {
               key={device.id}
               device={device}
               onAssignConfig={handleAssignConfig}
+              onNominateAgent={handleNominateAgent}
+              onClearAgent={(deviceId) => clearAgentMutation.mutate(deviceId)}
             />
           ))}
         </div>
       )}
+
+      <Dialog open={nominateDialogOpen} onOpenChange={setNominateDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nominate a Computer</DialogTitle>
+            <DialogDescription>
+              Command actions from this device will execute on the nominated
+              computer (running `streamdeck agent`).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {agents.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No agents registered yet. Run <code>streamdeck agent</code> on
+                the computer you want to control.
+              </p>
+            ) : (
+              <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a computer" />
+                </SelectTrigger>
+                <SelectContent>
+                  {agents.map((agent: Agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.hostname}
+                      {agent.user ? ` (${agent.user})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setNominateDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleConfirmNominate}
+                disabled={!selectedAgentId || nominateMutation.isPending}
+              >
+                {nominateMutation.isPending ? "Nominating..." : "Nominate"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
         <DialogContent>

@@ -11,25 +11,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { StreamDeckConfig } from "@/types/streamdeck";
-import { DEVICE_DIMENSIONS } from "@/types/streamdeck";
+import { deviceDimensions, deviceTypeLabel } from "@/types/streamdeck";
 
 interface ConfigCardProps {
   config: StreamDeckConfig;
   onDelete?: (configId: string) => void;
   onDuplicate?: (config: StreamDeckConfig) => void;
 }
-
-const deviceTypeLabels: Record<string, string> = {
-  "stream-deck": "Stream Deck",
-  "stream-deck-mini": "Mini",
-  "stream-deck-xl": "XL",
-  "stream-deck-mk2": "MK.2",
-  "stream-deck-plus": "+",
-};
-
 export function ConfigCard({ config, onDelete, onDuplicate }: ConfigCardProps) {
   const navigate = useNavigate();
-  const dimensions = DEVICE_DIMENSIONS[config?.deviceType ?? config?.device_type];
+  const dimensions = deviceDimensions(config?.deviceType ?? config?.device_type);
   const configuredButtons = (config?.buttons ?? []).filter(
     (b) => b.idle?.image || b.idle?.text || b.action
   ).length;
@@ -48,14 +39,14 @@ export function ConfigCard({ config, onDelete, onDuplicate }: ConfigCardProps) {
             <div>
               <CardTitle className="text-base">{config.name}</CardTitle>
               <Badge variant="secondary" className="mt-1">
-                {deviceTypeLabels[config?.deviceType ?? config?.device_type]}
+                {deviceTypeLabel(config?.deviceType ?? config?.device_type)}
               </Badge>
             </div>
           </div>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Config actions">
                 <MoreVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>

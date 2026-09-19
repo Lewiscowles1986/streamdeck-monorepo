@@ -172,6 +172,35 @@ export default function Settings() {
                 </span>
                 <span className="text-muted-foreground">/config/{"{config-id}"}</span>
               </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded bg-primary/20 px-2 py-0.5 text-xs text-primary">
+                  GET
+                </span>
+                <span className="text-muted-foreground">/agents</span>
+                <span className="text-xs text-muted-foreground">(nominated computers)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded bg-warning/20 px-2 py-0.5 text-xs text-warning">
+                  PUT
+                </span>
+                <span className="text-muted-foreground">
+                  /device/{"{device-id}"}/agent/{"{agent-id}"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded bg-destructive/20 px-2 py-0.5 text-xs text-destructive">
+                  DELETE
+                </span>
+                <span className="text-muted-foreground">
+                  /device/{"{device-id}"}/agent
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded bg-destructive/20 px-2 py-0.5 text-xs text-destructive">
+                  DELETE
+                </span>
+                <span className="text-muted-foreground">/agents/{"{agent-id}"}</span>
+              </div>
             </div>
           </CardContent>
         </Card>

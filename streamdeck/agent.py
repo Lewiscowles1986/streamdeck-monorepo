@@ -23,6 +23,47 @@ import requests
 
 AGENT_ID_FILE = ".streamdeck-agent-id"
 
+# Template variables supported inside command actions. The web UI inserts
+# these tokens (see frontend TEMPLATE_VARIABLES); the agent expands them
+# just before execution so the same action works on any machine.
+TEMPLATE_CONTEXT_KEYS = {
+    "button_index": "",
+    "device_id": "",
+    "toggle_state": "",
+    "config_name": "",
+    "timestamp": "",
+    "date": "",
+    "time": "",
+}
+
+
+def expand_template_vars(value: Any, context: dict[str, Any] | None = None) -> Any:
+    """
+    Recursively expand ``{{name}}`` template variables in a JSON-ish value.
+
+    Supported variables (mirroring the web UI's TEMPLATE_VARIABLES):
+      {{button_index}} {{device_id}} {{toggle_state}} {{config_name}}
+      {{timestamp}} (unix seconds) {{date}} (YYYY-MM-DD) {{time}} (HH:MM:SS)
+
+    Unknown variables are left untouched so literal ``{{...}}`` text in a
+    command survives.
+    """
+    ctx = dict(context or {})
+    ctx.setdefault("timestamp", str(int(time.time())))
+    ctx.setdefault("date", time.strftime("%Y-%m-%d"))
+    ctx.setdefault("time", time.strftime("%H:%M:%S"))
+
+    if isinstance(value, str):
+        out = value
+        for key, replacement in ctx.items():
+            out = out.replace("{{" + key + "}}", str(replacement))
+        return out
+    if isinstance(value, dict):
+        return {k: expand_template_vars(v, ctx) for k, v in value.items()}
+    if isinstance(value, list):
+        return [expand_template_vars(v, ctx) for v in value]
+    return value
+
 
 def _load_or_create_agent_id() -> str:
     """Persist a per-machine agent id in the user's home directory."""
@@ -80,13 +121,21 @@ def report_result(server: str, action_id: str, result: dict[str, Any]) -> None:
         print(f"[AGENT] result report failed: {err}")
 
 
-def execute(action: dict[str, Any]) -> dict[str, Any]:
+def execute(
+    action: dict[str, Any], context: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """
     Execute a command action on this machine:
     ``{"type": "command", "executable": str, "arguments": str|None, ...}``
+
+    ``context`` supplies runtime values for the ``{{...}}`` template
+    variables the web UI can insert (button index, device id, toggle state,
+    config name). Time tokens are always available.
     """
     if action.get("type") != "command":
         return {"status": "failed", "error": f"unsupported action type {action.get('type')!r}"}
+
+    action = expand_template_vars(action, context)
 
     executable = action.get("executable")
     if not executable:

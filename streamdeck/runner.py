@@ -24,7 +24,11 @@ from PIL import Image, ImageDraw, ImageFont, ImageSequence
 from .core.DeviceManager import DeviceManager
 from .core.ImageHelpers import PILHelper
 from .core.Transport.Transport import TransportError
-from .agent import enqueue_action as post_agent_action, build_agent_action
+from .agent import (
+    enqueue_action as post_agent_action,
+    build_agent_action,
+    expand_template_vars,
+)
 
 # Animation frames per second to attempt to display on the StreamDeck devices.
 FRAMES_PER_SECOND = 30
@@ -65,28 +69,93 @@ def load_image_from_source(source: str) -> Image.Image | Iterator[Image.Image]:
 # -------------------------
 # Rendering Helpers
 # -------------------------
-def convert_image(deck, img: Image.Image, label_text=None, font_path=None) -> bytes:
-    """Convert image to native StreamDeck format."""
-    image = PILHelper.create_scaled_key_image(
-        deck, img, margins=[0, 0, 20, 0] if label_text else [5, 5, 5, 5]
-    )
+def resolve_font_path(family: str | None) -> Path:
+    """
+    Resolve a font-family name to an existing font file. Only the bundled
+    Roboto ships with the package; everything else maps onto the closest
+    bundled/available face so the advertised font choices render instead of
+    being silently ignored.
+    """
+    assets = Path(__file__).parent / "assets"
+    if family:
+        key = family.strip().lower()
+        if "mono" in key:
+            for candidate in (
+                Path("/System/Library/Fonts/Menlo.ttc"),
+                Path("/System/Library/Fonts/Monaco.dfont"),
+                Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
+            ):
+                if candidate.exists():
+                    return candidate
+        elif "serif" in key and "sans" not in key:
+            for candidate in (
+                Path("/System/Library/Fonts/Supplemental/Times New Roman.ttf"),
+                Path("/System/Library/Fonts/Times.ttc"),
+                Path("/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf"),
+            ):
+                if candidate.exists():
+                    return candidate
+        # Named faces (Arial/Helvetica/Roboto/anything else): on macOS the
+        # system may provide them; else fall through to the bundled Roboto.
+        for name in (family, f"{family}.ttf"):
+            for candidate in (assets / name, Path("/Library/Fonts") / name):
+                if candidate.is_file():
+                    return candidate
+    bundled = assets / "Roboto-Regular.ttf"
+    if bundled.exists():
+        return bundled
+    return assets / "Roboto-Regular.ttf"
 
-    if font_path is None:
-        font_path = Path(__file__).parent / "assets" / "Roboto-Regular.ttf"
+
+def resolve_label_style(state_cfg: dict | None) -> dict:
+    """
+    Resolve the label drawing style for a button state. Defaults match the
+    original hardcoded port (Roboto 14, white, bottom) so existing configs
+    keep rendering identically; any ``font`` block in the state overrides.
+    """
+    font = (state_cfg or {}).get("font") or {}
+    return {
+        "family": font.get("family") or "Roboto",
+        "size": font.get("size") or 14,
+        "color": font.get("color") or "white",
+        "weight": font.get("weight") or "normal",
+        "position": font.get("position") or "bottom",
+    }
+
+
+def _label_anchor(position: str) -> str:
+    return {"top": "ma", "center": "mm", "middle": "mm"}.get(position, "ms")
+
+
+def convert_image(
+    deck, img: Image.Image, label_text=None, label_style: dict | None = None
+) -> bytes:
+    """Convert image to native StreamDeck format."""
+    margins = [0, 0, 20, 0] if label_text else [5, 5, 5, 5]
+    if label_text and label_style:
+        # Extra top margin when the label is drawn at the top edge.
+        if label_style.get("position") == "top":
+            margins = [20, 0, 0, 0]
+
+    image = PILHelper.create_scaled_key_image(deck, img, margins=margins)
+
     if label_text:
+        style = label_style or resolve_label_style(None)
         draw = ImageDraw.Draw(image)
-        font = ImageFont.truetype(str(font_path), 14)
+        font = ImageFont.truetype(
+            str(resolve_font_path(style["family"])), style["size"]
+        )
         draw.text(
-            (image.width / 2, image.height - 5),
+            (image.width / 2, image.height / 2),
             text=label_text,
             font=font,
-            anchor="ms",
-            fill="white",
+            anchor=_label_anchor(style["position"]),
+            fill=style["color"],
         )
     return PILHelper.to_native_key_format(deck, image)
 
 
-def render_key_image(deck, image_source, label_text=None, font_path=None):
+def render_key_image(deck, image_source, label_text=None, label_style=None):
     img = load_image_from_source(image_source)
 
     existing = persistent_images.get(image_source)
@@ -105,14 +174,19 @@ def render_key_image(deck, image_source, label_text=None, font_path=None):
         # Iterate through each animation frame of the source image
         for frame in ImageSequence.Iterator(img):
             # Create new key image of the correct dimensions, black background.
-            icon_frames.append(convert_image(deck, frame, label_text, font_path))
+            icon_frames.append(convert_image(deck, frame, label_text, label_style))
 
         # Return the decoded list of frames - the caller will need to decide
         # how to sequence them for display.
         persistent_images[image_source] = itertools.cycle(icon_frames)
         return persistent_images[image_source]
 
-    return convert_image(deck, img, label_text, font_path)
+    return convert_image(deck, img, label_text, label_style)
+
+
+def render_key_style(btn_cfg: dict) -> dict:
+    """Resolve label style for the button config that produced a render."""
+    return resolve_label_style(btn_cfg)
 
 
 # -------------------------
@@ -162,7 +236,8 @@ def update_key_image(deck, key, state):
         btn_cfg["image"] = BLANK_IMAGE
 
     text = btn_cfg.get("text") or ""
-    image = render_key_image(deck, btn_cfg["image"], text)
+    label_style = resolve_label_style(btn_cfg)
+    image = render_key_image(deck, btn_cfg["image"], text, label_style)
     if btn_cfg["image"] in persistent_images:
         persistent_image_buttons[key] = btn_cfg["image"]
 
@@ -179,13 +254,25 @@ def dispatch_action(deck, key, btn_action):
     """
     Execute a button action. Command actions are routed to the nominated
     agent computer when one is set (via the API), otherwise they are logged
-    for the operator.
+    for the operator. Template variables the web UI can insert are expanded
+    with the runtime context known at press time (button index, device id,
+    toggle state, config name).
     """
     if not isinstance(btn_action, dict) or btn_action.get("type") != "command":
         return
     device_id = deck.get_serial_number() if deck.is_open() else None
+
+    key_state = buttons.get(key) or {}
+    context = {
+        "button_index": key,
+        "device_id": device_id or "",
+        "toggle_state": key_state.get("state", 0),
+        "config_name": config.get("name", ""),
+    }
     action = build_agent_action(
-        action=btn_action, device_id=device_id, button_index=key
+        action=expand_template_vars(btn_action, context),
+        device_id=device_id,
+        button_index=key,
     )
     try:
         post_agent_action(action)

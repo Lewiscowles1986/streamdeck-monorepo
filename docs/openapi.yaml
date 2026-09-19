@@ -1,0 +1,359 @@
+openapi: 3.0.3
+info:
+  title: Stream Deck Configuration API
+  description: |
+    REST API for managing Elgato Stream Deck devices, button configurations,
+    and nominated agent computers ("nominate a computer").
+
+    ## Features
+    - Device discovery and management (dummy transport for hardware-free testing)
+    - Configuration CRUD + config-to-device assignment
+    - Agent registration, nomination, action queue (pending -> dispatched -> done|failed)
+    - Template variables in command actions, expanded by the agent at run time:
+      `{{button_index}}`, `{{device_id}}`, `{{toggle_state}}`, `{{config_name}}`,
+      `{{timestamp}}` (unix seconds), `{{date}}` (YYYY-MM-DD), `{{time}}` (HH:MM:SS)
+
+    ## Dialect rules
+    - Devices/Configs/AgentActions serialize **camelCase aliases**
+      (`deviceType`, `currentConfigId`, `activeAgentId`, `agentId`, `buttonIndex`,
+      `deviceId`, `createdAt`).
+    - **Agent** has NO aliases — snake_case (`last_seen`). The frontend reads both.
+    - Device `type` values are human names from the vendored core
+      ("Stream Deck XL", "Stream Deck +", ...). The UI stores kebab ids in configs;
+      the runner matches case-insensitively with space->dash tolerance.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+
+tags:
+  - name: Devices
+    description: Stream Deck device operations
+  - name: Configs
+    description: Configuration management
+  - name: Agents
+    description: Nominated computers (nominate-a-computer flow)
+
+paths:
+  /devices:
+    get:
+      tags: [Devices]
+      summary: List all devices ever seen (adds newly connected decks)
+      responses:
+        "200":
+          description: Device rows with live connected status
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Device"
+
+  /device/{device_id}/config/{config_id}:
+    put:
+      tags: [Devices]
+      summary: Assign a configuration to a device
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string } }
+        - { name: config_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Updated device, content: { application/json: { schema: { $ref: "#/components/schemas/Device" } } } }
+        "404": { description: Device or configuration not found }
+
+  /device/{device_id}/config:
+    get:
+      tags: [Devices]
+      summary: The config currently assigned to a device (runner-facing)
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Assigned config (or null) and the device, camelCase
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config:
+                    oneOf: [{ $ref: "#/components/schemas/Config" }, { type: "null" }]
+                  device:
+                    $ref: "#/components/schemas/Device"
+
+  /device/{device_id}/agent/{agent_id}:
+    put:
+      tags: [Agents]
+      summary: Nominate an agent computer for a device
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string } }
+        - { name: agent_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Updated device }
+        "404": { description: Device or agent not found }
+
+  /device/{device_id}/agent:
+    delete:
+      tags: [Agents]
+      summary: Clear the device nomination (fall back to local execution)
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Updated device }
+        "404": { description: Device not found }
+
+  /configs:
+    get:
+      tags: [Configs]
+      summary: List all configurations
+      responses:
+        "200":
+          description: Config list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Config" }
+
+  /config/{config_id}:
+    get:
+      tags: [Configs]
+      summary: Fetch one configuration
+      parameters:
+        - { name: config_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: The configuration, content: { application/json: { schema: { $ref: "#/components/schemas/Config" } } } }
+        "404": { description: Configuration not found }
+    put:
+      tags: [Configs]
+      summary: Replace a configuration (full body required)
+      parameters:
+        - { name: config_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Config" }
+      responses:
+        "200": { description: The replaced configuration }
+        "404": { description: Configuration not found }
+        "422": { description: Partial body rejected — name/deviceType/buttons all required }
+    delete:
+      tags: [Configs]
+      summary: Delete a configuration (also clears device assignments)
+      parameters:
+        - { name: config_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: The deleted configuration }
+        "404": { description: Configuration not found }
+
+  /config:
+    post:
+      tags: [Configs]
+      summary: Create a configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Config" }
+      responses:
+        "201": { description: Created configuration }
+
+  /agents:
+    get:
+      tags: [Agents]
+      summary: List registered agent computers
+      responses:
+        "200":
+          description: Agent list (snake_case — the Agent model has no aliases)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Agent" }
+    post:
+      tags: [Agents]
+      summary: Register an agent (idempotent upsert by client-generated id)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Agent" }
+      responses:
+        "201": { description: Registered agent }
+
+  /agents/{agent_id}:
+    delete:
+      tags: [Agents]
+      summary: Remove an agent (clears device nominations)
+      parameters:
+        - { name: agent_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: The deleted agent }
+        "404": { description: Agent not found }
+
+  /agents/{agent_id}/actions:
+    get:
+      tags: [Agents]
+      summary: Poll pending actions (flips each to dispatched)
+      parameters:
+        - { name: agent_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Pending actions, camelCase
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AgentAction" }
+        "404": { description: Agent not found }
+
+  /agents/{agent_id}/actions/{action_id}/result:
+    post:
+      tags: [Agents]
+      summary: Report an action result
+      parameters:
+        - { name: agent_id, in: path, required: true, schema: { type: string } }
+        - { name: action_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, example: "done" }
+                returncode: { type: integer }
+                stdout: { type: string }
+                stderr: { type: string }
+      responses:
+        "200": { description: Updated action }
+        "404": { description: Action not found }
+
+  /agent-actions:
+    post:
+      tags: [Agents]
+      summary: Queue an action for an agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentAction" }
+      responses:
+        "202": { description: Queued action, status forced to "pending" }
+        "404": { description: Unknown agentId }
+
+components:
+  schemas:
+    Device:
+      type: object
+      properties:
+        id: { type: string, description: "Device serial number" }
+        type: { type: string, example: "Stream Deck XL", description: "Human name from the vendored core" }
+        name: { type: string }
+        connected: { type: boolean }
+        currentConfigId: { type: string, nullable: true }
+        activeAgentId: { type: string, nullable: true }
+
+    Config:
+      type: object
+      required: [name, deviceType, buttons]
+      properties:
+        id: { type: string, readOnly: true }
+        name: { type: string }
+        deviceType:
+          type: string
+          example: "stream-deck-xl"
+          description: "Kebab id from the UI; the runner matches it against the deck's human name case-insensitively with space->dash tolerance"
+        buttons:
+          type: array
+          description: "JSON blob; list of per-button objects"
+          items: { $ref: "#/components/schemas/ButtonConfig" }
+
+    ButtonConfig:
+      type: object
+      properties:
+        index: { type: integer }
+        idle: { $ref: "#/components/schemas/ButtonAppearance" }
+        pressed: { $ref: "#/components/schemas/ButtonAppearance" }
+        action:
+          oneOf:
+            - $ref: "#/components/schemas/CommandAction"
+            - type: string
+              enum: [exit]
+        isToggle: { type: boolean }
+        toggleStates:
+          type: array
+          items: { $ref: "#/components/schemas/ToggleState" }
+
+    ButtonAppearance:
+      type: object
+      properties:
+        image:
+          type: string
+          description: "Local path, http(s) URL, or base64 data URI"
+        text: { type: string }
+        font: { $ref: "#/components/schemas/FontConfig" }
+
+    FontConfig:
+      type: object
+      description: "Honored by the runner when drawing labels"
+      properties:
+        family: { type: string, example: "Roboto" }
+        size: { type: integer, default: 14 }
+        color: { type: string, default: "#ffffff" }
+        weight: { type: string, enum: [normal, bold] }
+        position: { type: string, enum: [top, center, bottom] }
+
+    CommandAction:
+      type: object
+      required: [type, executable]
+      properties:
+        type: { type: string, enum: [command] }
+        executable: { type: string }
+        arguments: { type: string, description: "Shell-style string, split by the agent" }
+        cwd: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+        timeout: { type: integer, default: 30 }
+
+    ToggleState:
+      type: object
+      properties:
+        name: { type: string }
+        image: { type: string }
+        text: { type: string }
+        action: { $ref: "#/components/schemas/CommandAction" }
+
+    Agent:
+      type: object
+      description: "Snake_case — no camelCase aliases on this model"
+      required: [id, hostname]
+      properties:
+        id: { type: string, description: "Client-generated stable UUID" }
+        hostname: { type: string }
+        user: { type: string, nullable: true }
+        platform: { type: string, nullable: true }
+        active: { type: boolean, default: true }
+        last_seen: { type: string, nullable: true }
+
+    AgentAction:
+      type: object
+      required: [agentId, action]
+      properties:
+        id: { type: string, readOnly: true }
+        agentId: { type: string }
+        buttonIndex: { type: integer, nullable: true }
+        deviceId: { type: string, nullable: true }
+        action: { $ref: "#/components/schemas/CommandAction" }
+        status: { type: string, enum: [pending, dispatched, done, failed] }
+        createdAt: { type: string, nullable: true }
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+    Error:
+      type: object
+      properties:
+        detail: { type: string, description: "FastAPI error body" }

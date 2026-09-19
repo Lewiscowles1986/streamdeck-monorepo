@@ -1,21 +1,16 @@
-import { Monitor, CheckCircle, XCircle, Link } from "lucide-react";
+import { Monitor, CheckCircle, XCircle, Link, Laptop } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Device } from "@/types/streamdeck";
+import { deviceTypeLabel } from "@/types/streamdeck";
 
 interface DeviceCardProps {
   device: Device;
   onAssignConfig?: (deviceId: string) => void;
+  onNominateAgent?: (deviceId: string) => void;
+  onClearAgent?: (deviceId: string) => void;
 }
-
-const deviceTypeLabels: Record<string, string> = {
-  "stream-deck": "Stream Deck",
-  "stream-deck-mini": "Stream Deck Mini",
-  "stream-deck-xl": "Stream Deck XL",
-  "stream-deck-mk2": "Stream Deck MK.2",
-  "stream-deck-plus": "Stream Deck +",
-};
 
 function linkIfExists(assignedEntityId: string | undefined | null) {
   if (assignedEntityId) {
@@ -31,9 +26,15 @@ function linkIfExists(assignedEntityId: string | undefined | null) {
   return null;
 }
 
-export function DeviceCard({ device, onAssignConfig }: DeviceCardProps) {
+export function DeviceCard({
+  device,
+  onAssignConfig,
+  onNominateAgent,
+  onClearAgent,
+}: DeviceCardProps) {
   const assignedEntityId = device?.currentConfigId ?? device?.current_config_id;
   const assigned = Boolean(assignedEntityId);
+  const nominatedAgentId = device?.activeAgentId ?? device?.active_agent_id;
   return (
     <Card className="group relative overflow-hidden border-border bg-card transition-all hover:border-primary/50">
       <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
@@ -45,8 +46,8 @@ export function DeviceCard({ device, onAssignConfig }: DeviceCardProps) {
               <Monitor className="h-6 w-6 text-primary" />
             </div>
             <div>
-              <CardTitle className="text-lg">{device.name || deviceTypeLabels[device.type]}</CardTitle>
-              <p className="text-sm text-muted-foreground">{deviceTypeLabels[device.type]}</p>
+              <CardTitle className="text-lg">{device.name || deviceTypeLabel(device.type)}</CardTitle>
+              <p className="text-sm text-muted-foreground">{deviceTypeLabel(device.type)}</p>
             </div>
           </div>
           <Badge
@@ -69,12 +70,19 @@ export function DeviceCard({ device, onAssignConfig }: DeviceCardProps) {
             <span className="text-muted-foreground">Device ID</span>
             <p className="font-mono text-xs">{device.id}</p>
           </div>
-          {device.serial && (
-            <div>
-              <span className="text-muted-foreground">Serial</span>
-              <p className="font-mono text-xs">{device.serial}</p>
-            </div>
-          )}
+          <div>
+            <span className="text-muted-foreground">Nominated Agent</span>
+            <p className="font-mono text-xs truncate">
+              {nominatedAgentId ? (
+                <span className="inline-flex items-center gap-1">
+                  <Laptop className="h-3 w-3 text-primary" />
+                  {nominatedAgentId}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">None</span>
+              )}
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center justify-between border-t border-border pt-4">
@@ -84,14 +92,34 @@ export function DeviceCard({ device, onAssignConfig }: DeviceCardProps) {
               {linkIfExists(assignedEntityId) ?? "None assigned"}
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onAssignConfig?.(device.id)}
-          >
-            <Link className="mr-2 h-4 w-4" />
-            {(assigned) ? "Re-assign" : "Assign"}
-          </Button>
+          <div className="flex gap-2">
+            {nominatedAgentId && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onClearAgent?.(device.id)}
+                title="Fall back to local execution"
+              >
+                Clear agent
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onNominateAgent?.(device.id)}
+            >
+              <Laptop className="mr-2 h-4 w-4" />
+              {nominatedAgentId ? "Change agent" : "Nominate"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onAssignConfig?.(device.id)}
+            >
+              <Link className="mr-2 h-4 w-4" />
+              {(assigned) ? "Re-assign" : "Assign"}
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>
