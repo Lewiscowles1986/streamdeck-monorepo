@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.db
+dist/
+build/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dist-demo/
+frontend/.bun/
+
+# Agent identity
+.streamdeck-agent-id
+
+# OS / editor
+.DS_Store
+
+test-results/
+node_modules/

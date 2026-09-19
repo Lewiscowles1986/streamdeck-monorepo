@@ -1,0 +1,43 @@
+{
+  "created": "2026-09-19",
+  "repositories": [
+    {
+      "path": "python-elgato-streamdeck",
+      "remote": "git@github.com:Lewiscowles1986/python-elgato-streamdeck.git",
+      "branch": "master",
+      "head": "47c97ad508609cfc7312df556fb82a263533bd81",
+      "commit_message": "Bump minimum Python version to 3.10.",
+      "commit_date": "2025-12-04T18:08:58+11:00",
+      "upstream": "https://github.com/abcminiuser/python-elgato-streamdeck",
+      "upstream_version": "0.10.0",
+      "license": "MIT",
+      "ported_to": "streamdeck/core/**"
+    },
+    {
+      "path": "streamdeck",
+      "remote": "git@github.com:Lewiscowles1986/streamdeck.git",
+      "branch": "main",
+      "head": "078b8b23b43120e28580512dbd842a957bdf837d",
+      "commit_message": "refactor: default button image to data uri",
+      "commit_date": "2025-12-09T01:17:08+00:00",
+      "license": "see source repository",
+      "ported_to": [
+        "streamdeck/app.py",
+        "streamdeck/db.py",
+        "streamdeck/models.py",
+        "streamdeck/runner.py",
+        "streamdeck/assets/**"
+      ]
+    },
+    {
+      "path": "streamdeck-frontend",
+      "remote": "git@github.com:Lewiscowles1986/streamdeck-frontend.git",
+      "branch": "main",
+      "head": "bef572b7e36109600794abee9ca3aebedf8c47a1",
+      "commit_message": "feat: link to configuration from device when assigned",
+      "commit_date": "2025-12-07T13:13:03+00:00",
+      "license": "see source repository",
+      "ported_to": "frontend/**"
+    }
+  ]
+}

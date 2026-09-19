@@ -1,0 +1,522 @@
+openapi: 3.0.3
+info:
+  title: Stream Deck Configuration API
+  description: |
+    REST API for managing Elgato Stream Deck devices and their button configurations.
+    
+    ## Features
+    - Device discovery and management
+    - Configuration CRUD operations
+    - Config-to-device assignment
+    
+    ## Template Variables
+    Button actions support template variables that are expanded at runtime:
+    - `{{device_id}}` - The device's unique identifier
+    - `{{device_type}}` - Device model (e.g., "stream_deck_xl")
+    - `{{button_index}}` - Zero-based button index
+    - `{{config_id}}` - Current configuration ID
+    - `{{timestamp}}` - Unix timestamp
+    - `{{date}}` - Current date (YYYY-MM-DD)
+    - `{{time}}` - Current time (HH:MM:SS)
+  version: 1.0.0
+  contact:
+    name: API Support
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+
+tags:
+  - name: Devices
+    description: Stream Deck device operations
+  - name: Configs
+    description: Configuration management
+
+paths:
+  /devices:
+    get:
+      tags:
+        - Devices
+      summary: List all connected devices
+      description: Returns a list of all currently connected Stream Deck devices with their status and assigned configuration.
+      operationId: getDevices
+      responses:
+        '200':
+          description: List of connected devices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Device'
+              example:
+                - id: "ABC123DEF456"
+                  type: "stream_deck_xl"
+                  name: "Stream Deck XL"
+                  connected: true
+                  current_config_id: "config-uuid-1234"
+                - id: "XYZ789GHI012"
+                  type: "stream_deck_mk2"
+                  name: "Stream Deck MK.2"
+                  connected: true
+                  current_config_id: null
+
+  /device/{deviceId}/config/{configId}:
+    put:
+      tags:
+        - Devices
+      summary: Assign configuration to device
+      description: |
+        Assigns a configuration to a specific device. The device will immediately 
+        load and display the new configuration.
+      operationId: assignConfigToDevice
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          description: Unique identifier of the target device
+          schema:
+            type: string
+          example: "ABC123DEF456"
+        - name: configId
+          in: path
+          required: true
+          description: Unique identifier of the configuration to assign
+          schema:
+            type: string
+          example: "config-uuid-1234"
+      responses:
+        '200':
+          description: Configuration assigned successfully
+        '404':
+          description: Device or configuration not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /configs:
+    get:
+      tags:
+        - Configs
+      summary: List all configurations
+      description: Returns a list of all saved configurations.
+      operationId: getConfigs
+      responses:
+        '200':
+          description: List of configurations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StreamDeckConfig'
+
+  /config:
+    post:
+      tags:
+        - Configs
+      summary: Create new configuration
+      description: Creates a new Stream Deck configuration.
+      operationId: createConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StreamDeckConfigCreate'
+      responses:
+        '201':
+          description: Configuration created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamDeckConfig'
+        '400':
+          description: Invalid configuration data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /config/{configId}:
+    get:
+      tags:
+        - Configs
+      summary: Get configuration by ID
+      description: Returns a single configuration with all button details.
+      operationId: getConfigById
+      parameters:
+        - name: configId
+          in: path
+          required: true
+          description: Unique identifier of the configuration
+          schema:
+            type: string
+          example: "config-uuid-1234"
+      responses:
+        '200':
+          description: Configuration details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamDeckConfig'
+        '404':
+          description: Configuration not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      tags:
+        - Configs
+      summary: Update configuration
+      description: Updates an existing configuration. Partial updates are supported.
+      operationId: updateConfig
+      parameters:
+        - name: configId
+          in: path
+          required: true
+          description: Unique identifier of the configuration
+          schema:
+            type: string
+          example: "config-uuid-1234"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StreamDeckConfigUpdate'
+      responses:
+        '200':
+          description: Configuration updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StreamDeckConfig'
+        '404':
+          description: Configuration not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags:
+        - Configs
+      summary: Delete configuration
+      description: Permanently deletes a configuration.
+      operationId: deleteConfig
+      parameters:
+        - name: configId
+          in: path
+          required: true
+          description: Unique identifier of the configuration
+          schema:
+            type: string
+          example: "config-uuid-1234"
+      responses:
+        '204':
+          description: Configuration deleted successfully
+        '404':
+          description: Configuration not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    Device:
+      type: object
+      required:
+        - id
+        - type
+        - name
+        - connected
+      properties:
+        id:
+          type: string
+          description: Unique device identifier (serial number)
+          example: "ABC123DEF456"
+        type:
+          type: string
+          enum:
+            - stream_deck_original
+            - stream_deck_mini
+            - stream_deck_xl
+            - stream_deck_mk2
+            - stream_deck_pedal
+            - stream_deck_plus
+          description: Device model type
+          example: "stream_deck_xl"
+        name:
+          type: string
+          description: Human-readable device name
+          example: "Stream Deck XL"
+        connected:
+          type: boolean
+          description: Whether the device is currently connected
+          example: true
+        current_config_id:
+          type: string
+          nullable: true
+          description: ID of the currently active configuration, null if none assigned
+          example: "config-uuid-1234"
+
+    StreamDeckConfig:
+      type: object
+      required:
+        - id
+        - name
+        - device_type
+        - buttons
+      properties:
+        id:
+          type: string
+          description: Unique configuration identifier (UUID)
+          example: "config-uuid-1234"
+        name:
+          type: string
+          description: Configuration name
+          example: "Streaming Setup"
+        device_type:
+          type: string
+          enum:
+            - stream_deck_original
+            - stream_deck_mini
+            - stream_deck_xl
+            - stream_deck_mk2
+            - stream_deck_pedal
+            - stream_deck_plus
+          description: Target device type this config is designed for
+          example: "stream_deck_xl"
+        buttons:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ButtonConfig'
+          description: |
+            Map of button configurations keyed by button index (as string).
+            Button indices are zero-based, row-major order.
+            For Stream Deck XL (8x4): indices 0-31
+          example:
+            "0":
+              idle_image: "/images/obs-start.png"
+              text: "Start"
+              font: "Arial"
+              font_size: 14
+              text_color: "#FFFFFF"
+              text_position: "bottom"
+              action:
+                type: "command"
+                executable: "/usr/bin/obs"
+                args: ["--startstreaming"]
+
+    StreamDeckConfigCreate:
+      type: object
+      required:
+        - name
+        - device_type
+        - buttons
+      properties:
+        name:
+          type: string
+          description: Configuration name
+          example: "New Streaming Setup"
+        device_type:
+          type: string
+          enum:
+            - stream_deck_original
+            - stream_deck_mini
+            - stream_deck_xl
+            - stream_deck_mk2
+            - stream_deck_pedal
+            - stream_deck_plus
+          description: Target device type
+          example: "stream_deck_xl"
+        buttons:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ButtonConfig'
+          description: Button configurations
+
+    StreamDeckConfigUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Configuration name
+        device_type:
+          type: string
+          enum:
+            - stream_deck_original
+            - stream_deck_mini
+            - stream_deck_xl
+            - stream_deck_mk2
+            - stream_deck_pedal
+            - stream_deck_plus
+          description: Target device type
+        buttons:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ButtonConfig'
+          description: Button configurations
+
+    ButtonConfig:
+      type: object
+      description: Configuration for a single button
+      properties:
+        idle_image:
+          type: string
+          nullable: true
+          description: |
+            Path or URL to the idle state image. 
+            Supports PNG (512x512) and animated GIF.
+          example: "/images/button-idle.png"
+        pressed_image:
+          type: string
+          nullable: true
+          description: Path or URL to the pressed state image
+          example: "/images/button-pressed.png"
+        text:
+          type: string
+          nullable: true
+          description: Text overlay displayed on the button
+          example: "Start Stream"
+        font:
+          type: string
+          nullable: true
+          description: Font family for text overlay
+          example: "Arial"
+        font_size:
+          type: integer
+          nullable: true
+          minimum: 8
+          maximum: 72
+          description: Font size in pixels
+          example: 14
+        text_color:
+          type: string
+          nullable: true
+          pattern: '^#[0-9A-Fa-f]{6}$'
+          description: Text color as hex code
+          example: "#FFFFFF"
+        text_position:
+          type: string
+          nullable: true
+          enum:
+            - top
+            - middle
+            - bottom
+          description: Vertical text alignment
+          example: "bottom"
+        action:
+          $ref: '#/components/schemas/ButtonAction'
+        toggle:
+          $ref: '#/components/schemas/ToggleConfig'
+
+    ButtonAction:
+      type: object
+      description: Action executed when button is pressed
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - command
+          description: Action type (currently only "command" is supported)
+          example: "command"
+        executable:
+          type: string
+          description: |
+            Path to executable. Supports template variables.
+          example: "/usr/bin/notify-send"
+        args:
+          type: array
+          items:
+            type: string
+          description: Command arguments. Support template variables.
+          example: ["Button {{button_index}} pressed", "--urgency=normal"]
+        cwd:
+          type: string
+          nullable: true
+          description: Working directory for command execution
+          example: "/home/user/scripts"
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          nullable: true
+          description: Environment variables for command execution
+          example:
+            DISPLAY: ":0"
+            HOME: "/home/user"
+
+    ToggleConfig:
+      type: object
+      description: Toggle button configuration with multiple states
+      required:
+        - enabled
+        - states
+      properties:
+        enabled:
+          type: boolean
+          description: Whether toggle mode is enabled
+          example: true
+        states:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToggleState'
+          description: List of toggle states (cycled through on each press)
+
+    ToggleState:
+      type: object
+      description: A single toggle state with optional overrides
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: State identifier/name
+          example: "muted"
+        image:
+          type: string
+          nullable: true
+          description: Override image for this state
+          example: "/images/mic-muted.png"
+        text:
+          type: string
+          nullable: true
+          description: Override text for this state
+          example: "Muted"
+        font:
+          type: string
+          nullable: true
+          description: Override font for this state
+        font_size:
+          type: integer
+          nullable: true
+          description: Override font size for this state
+        text_color:
+          type: string
+          nullable: true
+          description: Override text color for this state
+        action:
+          $ref: '#/components/schemas/ButtonAction'
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error code
+          example: "not_found"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Configuration with ID 'config-uuid-1234' not found"

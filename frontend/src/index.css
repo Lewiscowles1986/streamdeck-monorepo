@@ -1,0 +1,136 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Stream Deck Manager - Dark Streamer Aesthetic */
+
+@layer base {
+  :root {
+    --background: 240 10% 8%;
+    --foreground: 220 15% 95%;
+
+    --card: 240 10% 12%;
+    --card-foreground: 220 15% 95%;
+
+    --popover: 240 10% 10%;
+    --popover-foreground: 220 15% 95%;
+
+    --primary: 265 85% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 10% 18%;
+    --secondary-foreground: 220 15% 90%;
+
+    --muted: 240 8% 16%;
+    --muted-foreground: 220 10% 60%;
+
+    --accent: 200 90% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 8% 20%;
+    --input: 240 8% 18%;
+    --ring: 265 85% 60%;
+
+    --radius: 0.5rem;
+
+    /* Sidebar */
+    --sidebar-background: 240 10% 6%;
+    --sidebar-foreground: 220 15% 90%;
+    --sidebar-primary: 265 85% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 10% 14%;
+    --sidebar-accent-foreground: 220 15% 95%;
+    --sidebar-border: 240 8% 18%;
+    --sidebar-ring: 265 85% 60%;
+
+    /* Stream Deck specific */
+    --button-bg: 240 10% 14%;
+    --button-border: 240 8% 22%;
+    --button-hover: 265 85% 60%;
+    --button-selected: 265 85% 50%;
+    --glow: 265 85% 60%;
+    --success: 145 70% 45%;
+    --warning: 35 90% 55%;
+  }
+
+  /* Force dark mode always */
+  .dark {
+    --background: 240 10% 8%;
+    --foreground: 220 15% 95%;
+
+    --card: 240 10% 12%;
+    --card-foreground: 220 15% 95%;
+
+    --popover: 240 10% 10%;
+    --popover-foreground: 220 15% 95%;
+
+    --primary: 265 85% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 10% 18%;
+    --secondary-foreground: 220 15% 90%;
+
+    --muted: 240 8% 16%;
+    --muted-foreground: 220 10% 60%;
+
+    --accent: 200 90% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 8% 20%;
+    --input: 240 8% 18%;
+    --ring: 265 85% 60%;
+
+    --sidebar-background: 240 10% 6%;
+    --sidebar-foreground: 220 15% 90%;
+    --sidebar-primary: 265 85% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 10% 14%;
+    --sidebar-accent-foreground: 220 15% 95%;
+    --sidebar-border: 240 8% 18%;
+    --sidebar-ring: 265 85% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  .glow-primary {
+    box-shadow: 0 0 20px hsl(var(--primary) / 0.4);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 20px hsl(var(--accent) / 0.4);
+  }
+
+  .glow-success {
+    box-shadow: 0 0 15px hsl(var(--success) / 0.5);
+  }
+
+  .streamdeck-button {
+    @apply relative overflow-hidden rounded-lg border border-border bg-card transition-all duration-200;
+  }
+
+  .streamdeck-button:hover {
+    @apply border-primary;
+    box-shadow: 0 0 15px hsl(var(--primary) / 0.3);
+  }
+
+  .streamdeck-button.selected {
+    @apply border-primary;
+    box-shadow: 0 0 20px hsl(var(--primary) / 0.5);
+  }
+}
