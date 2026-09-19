@@ -205,9 +205,9 @@ def key_change_callback(deck, key, state):
 
     if btn_action == "exit" and state:
         print("Exiting application as per button action.")
+        closed_event.set()
         deck.reset()
         deck.close()
-        closed_event.set()
         return
 
     if state and isinstance(btn_action, dict):
