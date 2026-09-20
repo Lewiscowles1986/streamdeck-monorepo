@@ -432,3 +432,67 @@ test.describe("full-stack parity: command input completion", () => {
   });
 });
 
+// ---------------------------------------------------------------
+// Round 7 (P18) — a sequence action built in the UI survives the real
+// API: the nested steps array round-trips through PUT/GET /config/{id}
+// (the JSON column preserves nested dicts — the same wire the runner
+// enqueues and the agent executes).
+// ---------------------------------------------------------------
+test.describe("full-stack parity: sequence action", () => {
+  test("sequence action with two steps round-trips through the real API", async ({
+    page,
+    request,
+  }) => {
+    const configName = `Sequence API ${Date.now()}`;
+    await createConfigAndOpenButton1(page, configName);
+
+    await page.getByText("Action", { exact: true }).first().click();
+    await page
+      .getByRole("combobox")
+      .filter({ hasText: /^No Action$/i })
+      .first()
+      .click();
+    await page
+      .getByRole("option", { name: /^Sequence \(run multiple actions\)$/i })
+      .click();
+
+    await page.getByRole("button", { name: /add step/i }).click();
+    await page
+      .getByTestId("sequence-step-0")
+      .getByPlaceholder("/path/to/executable")
+      .fill("/bin/echo");
+    await page
+      .getByTestId("sequence-step-0")
+      .getByPlaceholder("--flag value")
+      .fill("hello");
+
+    await page.getByRole("button", { name: /add step/i }).click();
+    await page
+      .getByTestId("sequence-step-1")
+      .getByPlaceholder("/path/to/executable")
+      .fill("/usr/bin/true");
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    // Structural round-trip through the real API: steps survive nested.
+    const configId = page.url().split("/").filter(Boolean).pop();
+    expect(configId, "URL must end in the config id").toBeTruthy();
+    const response = await request.get(`http://localhost:8000/config/${configId}`);
+    expect(response.ok()).toBeTruthy();
+    const saved = await response.json();
+    const sequenceAction = Object.values(saved.buttons)
+      .map((b) => (b as { action?: { type?: string; steps?: unknown[] } }).action)
+      .find((a) => a?.type === "sequence");
+    expect(sequenceAction).toMatchObject({
+      type: "sequence",
+      steps: [
+        { type: "command", executable: "/bin/echo", arguments: "hello" },
+        { type: "command", executable: "/usr/bin/true" },
+      ],
+    });
+  });
+});
+

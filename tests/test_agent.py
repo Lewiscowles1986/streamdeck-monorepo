@@ -359,3 +359,325 @@ def test_detached_reaper_is_a_daemon_thread(monkeypatch):
     assert result["status"] == "detached"
     reapers = [t for t in started if t.daemon]
     assert reapers, "no daemon reaper thread was started"
+
+
+# ---------------------------------------------------------------
+# R7 (P18): multi-step sequences. A sequence executes on the agent like
+# a command; each step is itself a full action (a command or another
+# nested sequence). Aggregation semantics (documented in parity.md):
+#   - "done"    — every step succeeded
+#   - "partial" — some steps failed (continue-on-error, the default)
+#   - "failed"  — ALL steps failed, or stopOnError aborted on a failure
+# Crash-safety: garbage sequences (non-dict steps, steps as a string,
+# missing steps key) return structured error results, never a raise.
+# ---------------------------------------------------------------
+def test_sequence_happy_path_two_echo_steps():
+    result = agent.execute(
+        {
+            "type": "sequence",
+            "steps": [
+                {"type": "command", "executable": "/bin/echo", "arguments": "one"},
+                {"type": "command", "executable": "/bin/echo", "arguments": "two"},
+            ],
+        }
+    )
+    assert result["type"] == "sequence"
+    assert result["status"] == "done"
+    assert len(result["steps"]) == 2
+    assert result["steps"][0]["returncode"] == 0
+    assert result["steps"][1]["returncode"] == 0
+
+
+def test_sequence_continues_on_error_by_default():
+    """Default is fire-all-steps: a failing step does not abort the run;
+    the aggregate reports "partial" and later steps still execute."""
+    result = agent.execute(
+        {
+            "type": "sequence",
+            "steps": [
+                {"type": "command", "executable": "/usr/bin/false"},
+                {"type": "command", "executable": "/bin/echo", "arguments": "still-ran"},
+            ],
+        }
+    )
+    assert result["status"] == "partial"
+    assert len(result["steps"]) == 2
+    assert result["steps"][0]["status"] == "failed"
+    assert result["steps"][1]["status"] == "done"
+    assert result["steps"][1]["stdout"].strip() == "still-ran"
+
+
+def test_sequence_all_failed_reports_failed():
+    """Every step failing aggregates to "failed" (distinct from "partial")."""
+    result = agent.execute(
+        {
+            "type": "sequence",
+            "steps": [
+                {"type": "command", "executable": "/usr/bin/false"},
+                {"type": "command", "executable": "/usr/bin/false"},
+            ],
+        }
+    )
+    assert result["status"] == "failed"
+
+
+def test_sequence_stop_on_error_skips_remaining_steps(tmp_path):
+    """stopOnError aborts remaining steps on the first failure; the failed
+    step is reported, the rest as skipped, and later steps never ran."""
+    marker = tmp_path / "stop-on-error-marker"
+    result = agent.execute(
+        {
+            "type": "sequence",
+            "stopOnError": True,
+            "steps": [
+                {"type": "command", "executable": "/usr/bin/false"},
+                {"type": "command", "executable": "/usr/bin/touch", "arguments": str(marker)},
+            ],
+        }
+    )
+    assert result["status"] == "failed"
+    assert len(result["steps"]) == 2
+    assert result["steps"][0]["status"] == "failed"
+    assert result["steps"][1]["status"] == "skipped"
+    assert not marker.exists(), "stopOnError must never run steps after the failure"
+
+
+def test_sequence_delay_ms_sleeps_before_step():
+    started = time.monotonic()
+    result = agent.execute(
+        {
+            "type": "sequence",
+            "steps": [
+                {
+                    "type": "command",
+                    "executable": "/bin/echo",
+                    "arguments": "after-delay",
+                    "delayMs": 200,
+                }
+            ],
+        }
+    )
+    elapsed = time.monotonic() - started
+    assert elapsed >= 0.2, f"delayMs not respected (took {elapsed:.3f}s)"
+    assert result["status"] == "done"
+
+
+def test_sequence_delay_ms_is_clamped_to_60s(monkeypatch):
+    """A corrupt/huge delayMs must clamp to 60s — never park the agent
+    for hours. The test injects a sleep recorder and asserts no single
+    sleep exceeded the cap (and does not actually sleep)."""
+    slept: list[float] = []
+
+    def spy_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(agent.time, "sleep", spy_sleep)
+    agent.execute(
+        {
+            "type": "sequence",
+            "steps": [
+                {"type": "command", "executable": "/bin/echo", "delayMs": 99999999}
+            ],
+        }
+    )
+    assert slept, "a positive delayMs must sleep before the step"
+    assert max(slept) <= 60.0, f"delayMs not clamped (slept {max(slept)})"
+
+
+def test_as_delay_ms_sanitizer():
+    """Unit teeth for the clamp: non-numeric → 0, negatives → 0, huge → cap."""
+    assert agent._as_delay_ms(99999999) == 60000
+    assert agent._as_delay_ms("not-a-number") == 0
+    assert agent._as_delay_ms(-5) == 0
+    assert agent._as_delay_ms(250) == 250
+    assert agent._as_delay_ms(None) == 0
+
+
+def test_sequence_nested_depth_2_works():
+    result = agent.execute(
+        {
+            "type": "sequence",
+            "steps": [
+                {
+                    "type": "sequence",
+                    "steps": [
+                        {"type": "command", "executable": "/bin/echo", "arguments": "nested"}
+                    ],
+                }
+            ],
+        }
+    )
+    assert result["status"] == "done"
+    inner = result["steps"][0]
+    assert inner["status"] == "done"
+    assert inner["steps"][0]["stdout"].strip() == "nested"
+
+
+def test_sequence_nesting_capped_at_depth_4():
+    """Nesting deeper than 4 yields an error result for the deep step —
+    never a crash and never runaway recursion."""
+    # Five levels of sequences: depth 5 is one past the cap.
+    deep = agent.execute(
+        {
+            "type": "sequence",
+            "steps": [
+                {
+                    "type": "sequence",
+                    "steps": [
+                        {
+                            "type": "sequence",
+                            "steps": [
+                                {
+                                    "type": "sequence",
+                                    "steps": [
+                                        {
+                                            "type": "sequence",
+                                            "steps": [
+                                                {
+                                                    "type": "command",
+                                                    "executable": "/bin/echo",
+                                                    "arguments": "too-deep",
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    # The innermost sequence (depth 5) must error out; the error bubbles up
+    # as a failed step at every enclosing level.
+    assert deep["status"] == "failed"
+    level2 = deep["steps"][0]
+    assert level2["status"] == "failed"
+    assert level2["steps"][0]["status"] == "failed"
+
+
+def test_sequence_garbage_shapes_never_raise():
+    """The polling loop feeds arbitrary JSON; every garbage sequence shape
+    must return a structured result, never an exception."""
+    garbage_sequences = [
+        {},  # no type at all
+        {"type": "sequence"},  # missing steps key
+        {"type": "sequence", "steps": "not-a-list"},
+        {"type": "sequence", "steps": 42},
+        {"type": "sequence", "steps": {"a": 1}},  # dict instead of list
+        {"type": "sequence", "steps": [42]},  # non-dict step
+        {"type": "sequence", "steps": [None]},
+        {"type": "sequence", "steps": ["just-a-string"]},
+        {"type": "sequence", "steps": [{"type": 99}]},  # corrupt step type
+        {"type": "sequence", "steps": [{"no": "type"}]},  # step without type
+        {"type": "sequence", "steps": [{"type": "command"}]},  # no executable
+        {"type": "sequence", "steps": ["not-a-list"]},
+    ]
+    for action in garbage_sequences:
+        result = agent.execute(action)  # must not raise
+        assert isinstance(result, dict), f"unstructured result for {action!r}"
+        assert "status" in result, f"result missing status for {action!r}"
+
+
+def test_expand_template_vars_recurses_into_sequence_steps():
+    """expand_template_vars must expand fields inside sequence steps with
+    the same button context (it recurses dicts and lists)."""
+    ctx = {"button_index": 5, "config_name": "Seq Cfg"}
+    action = {
+        "type": "sequence",
+        "steps": [
+            {
+                "type": "command",
+                "executable": "echo",
+                "arguments": "btn={{button_index}} cfg={{config_name}}",
+            }
+        ],
+    }
+    expanded = agent.expand_template_vars(action, ctx)
+    assert expanded["steps"][0]["arguments"] == "btn=5 cfg=Seq Cfg"
+
+
+def test_sequence_template_expansion_inside_steps(tmp_path):
+    """End-to-end template expansion: {{button_index}} inside a step's
+    arguments expands with the button context before the step runs."""
+    result = agent.execute(
+        {
+            "type": "sequence",
+            "steps": [
+                {
+                    "type": "command",
+                    "executable": "/bin/echo",
+                    "arguments": "btn={{button_index}}",
+                }
+            ],
+        },
+        context={"button_index": 9},
+    )
+    assert result["status"] == "done"
+    assert result["steps"][0]["stdout"].strip() == "btn=9"
+
+
+# ---------------------------------------------------------------
+# R7 judge fixes: detached steps are SUCCESSFUL launches, not failures.
+# _execute_detached reports status "detached" (the process was started —
+# the fire-and-forget contract); aggregation must treat that as a
+# non-failure, or (a) stopOnError aborts remaining steps after a
+# successful detached launch, and (b) detached+done aggregates to
+# "partial" although nothing failed.
+# ---------------------------------------------------------------
+def test_sequence_stop_on_error_does_not_abort_after_detached_step():
+    """A detached step IS a successful launch; stopOnError must not abort
+    after one — abort is for FAILURES only."""
+    result = agent.execute(
+        {
+            "type": "sequence",
+            "stopOnError": True,
+            "steps": [
+                {"type": "command", "executable": "/usr/bin/true", "mode": "detached"},
+                {"type": "command", "executable": "/bin/echo", "arguments": "ran"},
+            ],
+        }
+    )
+    assert len(result["steps"]) == 2
+    assert result["steps"][0]["status"] == "detached"
+    assert result["steps"][1]["status"] == "done", (
+        "stopOnError must not skip steps after a successful detached launch"
+    )
+
+
+def test_sequence_detached_plus_done_aggregates_to_done():
+    """detached + done with zero failures must aggregate to "done" —
+    "partial" is reserved for sequences where some step FAILED."""
+    result = agent.execute(
+        {
+            "type": "sequence",
+            "steps": [
+                {"type": "command", "executable": "/usr/bin/true", "mode": "detached"},
+                {"type": "command", "executable": "/bin/echo", "arguments": "hi"},
+            ],
+        }
+    )
+    assert result["status"] == "done"
+
+
+def test_sequence_cyclic_self_reference_hits_depth_cap():
+    """A cyclic sequence (a step list containing the enclosing action
+    object itself) must terminate at the depth cap with structured
+    failures — never an infinite loop or a RecursionError escaping."""
+    cyclic: dict = {"type": "sequence", "steps": []}
+    cyclic["steps"].append(cyclic)  # shared self-referencing dict
+    result = agent.execute(cyclic)
+    assert result["status"] == "failed"
+    # Each enclosing level wraps the inner result in its own "steps" list;
+    # the cap fires at depth 5, i.e. four levels down. Walking the chain
+    # must terminate (bounded structure, no runaway nesting).
+    node = result
+    levels = 0
+    while "steps" in node:
+        node = node["steps"][0]
+        levels += 1
+        assert levels <= 10, "cyclic nesting produced runaway structure"
+    assert levels == 4, f"expected cap at 4 wrapped levels, got {levels}"
+    assert node["status"] == "failed"
+    assert "nesting deeper" in node["error"]

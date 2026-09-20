@@ -41,6 +41,17 @@ TEMPLATE_CONTEXT_KEYS = {
 # in an action falls back to this rather than crashing the executor.
 DEFAULT_TIMEOUT = 30
 
+# R7: per-step sleep cap for sequence delayMs, in milliseconds. A corrupt
+# or absurd delay (e.g. 99999999) clamps here instead of parking the agent
+# loop for a day.
+MAX_DELAY_MS = 60000
+
+# R7: how deeply sequences may nest (a sequence step that is itself a
+# sequence counts). Deeper nesting returns an error result for that step
+# instead of recursing — runaway recursive configs must never hang the
+# agent loop.
+MAX_SEQUENCE_DEPTH = 4
+
 
 def _as_int(value: Any, fallback: int) -> int:
     """Coerce a JSON-ish value to int with a fallback (crash-safety)."""
@@ -48,6 +59,16 @@ def _as_int(value: Any, fallback: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def _as_delay_ms(value: Any) -> int:
+    """Coerce a step's delayMs to a safe sleep duration in milliseconds:
+    non-numeric → 0, negative → 0, anything above MAX_DELAY_MS clamped to
+    the cap. The executor sleeps this long BEFORE running the step."""
+    delay = _as_int(value, 0)
+    if delay <= 0:
+        return 0
+    return min(delay, MAX_DELAY_MS)
 
 
 def _as_env(value: Any) -> dict:
@@ -173,12 +194,29 @@ def execute(
         start_new_session=True so it survives the agent) and report
         status "detached" with the child's pid. No timeout, no capture.
 
+    Sequences (P18): ``{"type": "sequence", "steps": [action, ...]}``
+    executes each step through the SAME execution path (steps may be
+    command actions or nested sequences, nesting capped at
+    MAX_SEQUENCE_DEPTH). Steps run with continue-on-error by default;
+    ``stopOnError: true`` aborts remaining steps on the first failure.
+    Each step may carry ``delayMs`` (sleep before that step, capped).
+
     Crash-safety contract: execute() NEVER raises. Every failure mode —
-    missing executable, nonexistent cwd, corrupt env/timeout/mode, even an
-    internal bug — comes back as a structured result with a "status" key,
-    because this runs inside the agent's polling loop and one bad action
-    must never kill the loop.
+    missing executable, nonexistent cwd, corrupt env/timeout/mode, garbage
+    sequences, even an internal bug — comes back as a structured result
+    with a "status" key, because this runs inside the agent's polling loop
+    and one bad action must never kill the loop.
     """
+    return _execute_one(action, context, depth=1)
+
+
+def _execute_one(
+    action: Any, context: dict[str, Any] | None, depth: int
+) -> dict[str, Any]:
+    """Shared dispatch for top-level actions AND sequence steps: expands
+    templates, then routes command actions to the launch-mode executors and
+    sequence actions to the step iterator. ``depth`` bounds sequence
+    nesting; the outer try/except keeps the never-raise contract."""
     try:
         if not isinstance(action, dict):
             return {
@@ -186,10 +224,13 @@ def execute(
                 "error": f"action is not an object: {action!r}",
             }
 
-        if action.get("type") != "command":
+        action_type = action.get("type")
+        if action_type == "sequence":
+            return _execute_sequence(action, context, depth)
+        if action_type != "command":
             return {
                 "status": "failed",
-                "error": f"unsupported action type {action.get('type')!r}",
+                "error": f"unsupported action type {action_type!r}",
             }
 
         action = expand_template_vars(action, context)
@@ -216,6 +257,85 @@ def execute(
         return _execute_attached(argv, action)
     except Exception as err:  # never let an action kill the agent loop
         return {"status": "failed", "error": f"executor error: {err}"}
+
+
+def _execute_sequence(
+    action: dict[str, Any], context: dict[str, Any] | None, depth: int
+) -> dict[str, Any]:
+    """R7 (P18): run a sequence's steps one after another. Each step is a
+    full action executed through the SAME dispatch as a top-level action
+    (_execute_one — so steps may be commands or nested sequences).
+
+    Aggregation semantics:
+      - continue-on-error is the DEFAULT: every step fires; the aggregate
+        is "done" (all succeeded), "partial" (some failed) or "failed"
+        (every step failed).
+      - ``stopOnError: true`` aborts remaining steps on the first failure;
+        unexecuted steps are reported as {"status": "skipped"} and the
+        aggregate is "failed".
+      - A step's optional ``delayMs`` sleeps (capped by _as_delay_ms)
+        BEFORE that step runs.
+      - Nesting deeper than MAX_SEQUENCE_DEPTH yields a structured error
+        for the deep step instead of recursing forever.
+
+    Garbage shapes (steps missing, not a list, non-dict steps) come back
+    as structured failed results — never a raise."""
+    if depth > MAX_SEQUENCE_DEPTH:
+        return {
+            "type": "sequence",
+            "status": "failed",
+            "error": (
+                f"sequence nesting deeper than {MAX_SEQUENCE_DEPTH} levels"
+            ),
+        }
+
+    steps = action.get("steps")
+    if not isinstance(steps, list):
+        return {
+            "type": "sequence",
+            "status": "failed",
+            "error": f"sequence has no steps list: {steps!r}",
+        }
+
+    stop_on_error = bool(action.get("stopOnError"))
+    step_results: list[dict[str, Any]] = []
+    aborted = False
+
+    for step in steps:
+        if aborted:
+            step_results.append({"status": "skipped"})
+            continue
+
+        delay_ms = _as_delay_ms(
+            step.get("delayMs") if isinstance(step, dict) else 0
+        )
+        if delay_ms > 0:
+            time.sleep(delay_ms / 1000.0)
+
+        result = _execute_one(step, context, depth + 1)
+        step_results.append(result)
+
+        # P14 detached steps are SUCCESSFUL launches (fire-and-forget):
+        # "done" (waited, rc 0) and "detached" (started, not waited) are
+        # both success statuses — stopOnError aborts on FAILURES only.
+        if stop_on_error and result.get("status") not in (
+            "done",
+            "detached",
+        ):
+            aborted = True
+
+    if aborted:
+        status = "failed"
+    else:
+        statuses = [r.get("status") for r in step_results]
+        if all(s in ("done", "detached") for s in statuses):
+            status = "done"
+        elif all(s == "failed" for s in statuses):
+            status = "failed"
+        else:
+            status = "partial"
+
+    return {"type": "sequence", "status": status, "steps": step_results}
 
 
 def _execute_attached(argv: list[str], action: dict[str, Any]) -> dict[str, Any]:

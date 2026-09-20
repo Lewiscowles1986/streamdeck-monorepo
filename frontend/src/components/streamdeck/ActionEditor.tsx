@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { CommandInput } from "./CommandInput";
 import {
   Select,
@@ -20,6 +21,8 @@ import {
 import type {
   ButtonAction,
   CommandAction,
+  SequenceAction,
+  SequenceStep,
   SwitchConfigAction,
   StreamDeckConfig,
 } from "@/types/streamdeck";
@@ -41,6 +44,11 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
 
   const commandAction = action?.type === "command" ? action : null;
   const switchAction = action?.type === "switch-config" ? action : null;
+  const sequenceAction = action?.type === "sequence" ? action : null;
+
+  // JSON fallback for sequence steps the structured editor does not host
+  // (non-command step types). Editing here replaces the whole steps array.
+  const [stepsJson, setStepsJson] = useState<string | null>(null);
 
   // The switch-config picker lists every config in the store (demo mock or
   // real API — configsApi.getAll serves both).
@@ -135,6 +143,9 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
             } else if (value === "switch-config") {
               // P15: the runner swaps its active config for this one.
               onChange({ type: "switch-config", configId: "" });
+            } else if (value === "sequence") {
+              // P18: an empty sequence — add steps to build it up.
+              onChange({ type: "sequence", steps: [] });
             } else {
               updateCommand({});
             }
@@ -146,6 +157,7 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
           <SelectContent>
             <SelectItem value="none">No Action</SelectItem>
             <SelectItem value="command">Command</SelectItem>
+            <SelectItem value="sequence">Sequence (run multiple actions)</SelectItem>
             <SelectItem value="switch-config">Switch Config</SelectItem>
             <SelectItem value="exit">Exit (shut down the runner)</SelectItem>
           </SelectContent>
@@ -163,6 +175,15 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
         <SwitchConfigFields
           action={switchAction}
           configs={configs}
+          onChange={onChange}
+        />
+      )}
+
+      {sequenceAction && (
+        <SequenceEditor
+          action={sequenceAction}
+          stepsJson={stepsJson}
+          onStepsJsonChange={setStepsJson}
           onChange={onChange}
         />
       )}
@@ -343,6 +364,196 @@ function SwitchConfigFields({
         Pressing this button makes the device runner switch to the selected
         configuration and re-render every key. Unknown ids are ignored at
         press time (the current config stays active).
+      </p>
+    </div>
+  );
+}
+
+/**
+ * P18 sequence editor: steps as compact cards, each hosting the command
+ * fields (executable + arguments via CommandInput, launch mode) plus a
+ * per-step "Delay before step (ms)" input and remove button; a stopOnError
+ * switch for the sequence. JSON View round-trips the nested structure; a
+ * JSON fallback textarea hosts step types the card form does not.
+ */
+function SequenceEditor({
+  action,
+  stepsJson,
+  onStepsJsonChange,
+  onChange,
+}: {
+  action: SequenceAction;
+  stepsJson: string | null;
+  onStepsJsonChange: (json: string | null) => void;
+  onChange: (action: ButtonAction | null) => void;
+}) {
+  const steps = Array.isArray(action.steps) ? action.steps : [];
+
+  const updateSequence = (updates: Partial<SequenceAction>) => {
+    onChange({ ...action, ...updates });
+  };
+
+  const addStep = () => {
+    const next: SequenceStep = { type: "command", executable: "" };
+    onChange({ ...action, steps: [...steps, next] });
+  };
+
+  const updateStep = (index: number, updates: Partial<SequenceStep>) => {
+    const newSteps = steps.map((step, i) =>
+      i === index ? { ...step, ...updates } : step
+    );
+    onChange({ ...action, steps: newSteps });
+  };
+
+  const removeStep = (index: number) => {
+    onChange({
+      ...action,
+      steps: steps.filter((_, i) => i !== index),
+    });
+  };
+
+  const applyStepsJson = () => {
+    try {
+      const parsed = JSON.parse(stepsJson ?? "[]");
+      if (!Array.isArray(parsed)) return;
+      onChange({ ...action, steps: parsed });
+      onStepsJsonChange(null);
+    } catch {
+      // invalid JSON: keep the textarea open for correction
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <Label>Sequence Steps ({steps.length})</Label>
+        <Button variant="outline" size="sm" onClick={addStep}>
+          <Plus className="mr-1 h-4 w-4" />
+          Add step
+        </Button>
+      </div>
+
+      {steps.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          No steps yet — each step is a full action run in order.
+        </p>
+      )}
+
+      <div className="space-y-3">
+        {steps.map((step, index) => (
+          <div key={index} className="rounded-md border border-border p-3" data-testid={`sequence-step-${index}`}>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">
+                Step {index + 1}
+                {"type" in step && step.type === "command" ? (
+                  <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] uppercase">
+                    Command
+                  </span>
+                ) : null}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-destructive hover:text-destructive"
+                onClick={() => removeStep(index)}
+                aria-label={`Remove step ${index + 1}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Executable</Label>
+              </div>
+              <CommandInput
+                value={step.executable || ""}
+                onChange={(executable) => updateStep(index, { executable })}
+                placeholder="/path/to/executable"
+              />
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Arguments</Label>
+              </div>
+              <CommandInput
+                value={step.arguments || ""}
+                onChange={(arguments_) => updateStep(index, { arguments: arguments_ })}
+                placeholder="--flag value"
+                executableContext={step.executable}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label className="text-xs">Launch Mode</Label>
+                  <Select
+                    value={step.mode || "attached"}
+                    onValueChange={(value) =>
+                      updateStep(index, { mode: value as "attached" | "detached" })
+                    }
+                  >
+                    <SelectTrigger className="h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="attached">Attached</SelectItem>
+                      <SelectItem value="detached">Detached</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Delay before step (ms)</Label>
+                  <Input
+                    type="number"
+                    value={step.delayMs ?? 0}
+                    onChange={(e) =>
+                      updateStep(index, {
+                        delayMs: parseInt(e.target.value) || 0,
+                      })
+                    }
+                    min={0}
+                    max={60000}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-between rounded-md border border-border p-3">
+        <div className="space-y-1">
+          <Label>Stop on Error</Label>
+          <p className="text-xs text-muted-foreground">
+            Abort remaining steps after the first failure (default: fire all
+            steps and report partial results).
+          </p>
+        </div>
+        <Switch
+          checked={action.stopOnError || false}
+          onCheckedChange={(checked) => updateSequence({ stopOnError: checked })}
+          aria-label="Stop on Error"
+        />
+      </div>
+
+      <details className="rounded-md border border-border p-3" data-testid="sequence-json-fallback">
+        <summary className="cursor-pointer text-xs text-muted-foreground">
+          Advanced: edit steps as JSON
+        </summary>
+        <div className="mt-2 space-y-2">
+          <Textarea
+            value={stepsJson ?? JSON.stringify(steps, null, 2)}
+            onChange={(e) => onStepsJsonChange(e.target.value)}
+            rows={8}
+            className="font-mono text-xs"
+            aria-label="Sequence steps JSON"
+          />
+          <Button variant="outline" size="sm" onClick={applyStepsJson}>
+            Apply JSON
+          </Button>
+        </div>
+      </details>
+
+      <p className="text-xs text-muted-foreground">
+        Steps run in order on the nominated agent. A failed step does not stop
+        the runner — results are reported per step.
       </p>
     </div>
   );

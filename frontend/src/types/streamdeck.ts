@@ -63,7 +63,29 @@ export interface SwitchConfigAction {
   configId: string;
 }
 
-export type ButtonAction = CommandAction | ExitAction | SwitchConfigAction;
+/**
+ * Sequence step (P18): a full action that runs after the sequence's
+ * previous step. The structured editor hosts command fields (the 90% case);
+ * other step types round-trip via JSON View.
+ */
+export type SequenceStep = CommandAction & { delayMs?: number };
+
+/**
+ * Multi-step sequence action (P18): runs each step in order on the agent.
+ * Steps fire with continue-on-error by default; `stopOnError: true` aborts
+ * remaining steps on the first failure.
+ */
+export interface SequenceAction {
+  type: "sequence";
+  steps: SequenceStep[];
+  stopOnError?: boolean;
+}
+
+export type ButtonAction =
+  | CommandAction
+  | ExitAction
+  | SwitchConfigAction
+  | SequenceAction;
 
 // A nominated computer running `streamdeck agent` (backend Agent model).
 // NOTE: the Agent model intentionally has NO camelCase aliases — the wire

@@ -760,3 +760,120 @@ test.describe("demo-ui parity: command input completion", () => {
     await expect(argsInput).toHaveValue("-e");
   });
 });
+
+// ---------------------------------------------------------------
+// Round 7 (P18) — sequence actions: the ActionEditor offers a
+// "Sequence (run multiple actions)" type; the structured editor hosts
+// per-step command cards (Executable/Arguments via CommandInput, mode,
+// per-step delay, remove) plus a sequence-level stopOnError switch. JSON
+// View shows the nested wire form {"type": "sequence", "steps": [...]}
+// the agent executor consumes; save + reload round-trips it.
+// ---------------------------------------------------------------
+test.describe("demo-ui parity: sequence actions", () => {
+  /** Open button 1's Action tab with a Sequence action configured. */
+  async function openSequenceAction(page: Page) {
+    await createConfigAndOpenButton1(page, `Sequence E2E ${Date.now()}`);
+    await page.getByText("Action", { exact: true }).first().click();
+    const actionTrigger = page
+      .getByRole("combobox")
+      .filter({ hasText: /^No Action$/i })
+      .first();
+    await actionTrigger.click();
+    await page
+      .getByRole("option", { name: /^Sequence \(run multiple actions\)$/i })
+      .click();
+    await expect(page.getByRole("button", { name: /add step/i })).toBeVisible();
+  }
+
+  test("sequence action builds two steps and round-trips through JSON View", async ({
+    page,
+  }) => {
+    await openSequenceAction(page);
+
+    // Step 1: echo hello
+    await page.getByRole("button", { name: /add step/i }).click();
+    await page
+      .getByTestId("sequence-step-0")
+      .getByPlaceholder("/path/to/executable")
+      .fill("/bin/echo");
+    await page
+      .getByTestId("sequence-step-0")
+      .getByPlaceholder("--flag value")
+      .fill("hello");
+
+    // Step 2: true
+    await page.getByRole("button", { name: /add step/i }).click();
+    await page
+      .getByTestId("sequence-step-1")
+      .getByPlaceholder("/path/to/executable")
+      .fill("/usr/bin/true");
+
+    // JSON View must show the nested wire structure the agent consumes.
+    await page.getByRole("tab", { name: /json view/i }).click();
+    const pre = page.locator("pre");
+    await expect(pre).toContainText('"type": "sequence"');
+    await expect(pre).toContainText('"steps"');
+    await expect(pre).toContainText('"executable": "/bin/echo"');
+  });
+
+  test("sequence editor supports delay, stopOnError, and persists them", async ({
+    page,
+  }) => {
+    await openSequenceAction(page);
+
+    await page.getByRole("button", { name: /add step/i }).click();
+    await page
+      .getByTestId("sequence-step-0")
+      .getByPlaceholder("/path/to/executable")
+      .fill("/bin/echo");
+
+    // Per-step delay (the only number input inside the step card).
+    const delayInput = page
+      .getByTestId("sequence-step-0")
+      .locator('input[type="number"]');
+    await delayInput.fill("250");
+    await expect(delayInput).toHaveValue("250");
+
+    // Sequence-level stopOnError switch (labeled — the Action tab also
+    // hosts the Toggle Mode switch).
+    await page.getByRole("switch", { name: "Stop on Error" }).click();
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    // Reload: both values must come back from the store.
+    await page.reload();
+    await page.locator(".streamdeck-button").first().click();
+    await page.getByText("Action", { exact: true }).first().click();
+
+    await expect(
+      page.getByTestId("sequence-step-0").locator('input[type="number"]')
+    ).toHaveValue("250");
+    await expect(page.getByRole("switch", { name: "Stop on Error" })).toBeChecked();
+
+    // JSON View: the persisted wire fields.
+    await page.getByRole("tab", { name: /json view/i }).click();
+    const pre = page.locator("pre");
+    await expect(pre).toContainText('"delayMs": 250');
+    await expect(pre).toContainText('"stopOnError": true');
+  });
+
+  test("steps can be removed from the sequence", async ({ page }) => {
+    await openSequenceAction(page);
+
+    await page.getByRole("button", { name: /add step/i }).click();
+    await page.getByRole("button", { name: /add step/i }).click();
+    await expect(page.getByTestId("sequence-step-1")).toBeVisible();
+
+    await page
+      .getByTestId("sequence-step-0")
+      .getByRole("button", { name: /remove step 1/i })
+      .click();
+
+    // The remaining card is now the only step, renumbered to 0.
+    await expect(page.getByTestId("sequence-step-0")).toBeVisible();
+    await expect(page.getByTestId("sequence-step-1")).toHaveCount(0);
+  });
+});

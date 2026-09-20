@@ -362,13 +362,19 @@ def _set_paused_for_key(key: int, paused: bool) -> None:
 # -------------------------
 def dispatch_action(deck, key, btn_action):
     """
-    Execute a button action. Command actions are routed to the nominated
-    agent computer when one is set (via the API), otherwise they are logged
-    for the operator. Template variables the web UI can insert are expanded
-    with the runtime context known at press time (button index, device id,
-    toggle state, config name).
+    Execute a button action. Command and sequence actions (P18) are routed
+    to the nominated agent computer when one is set (via the API); anything
+    else is logged for the operator. Template variables the web UI can
+    insert are expanded with the runtime context known at press time
+    (button index, device id, toggle state, config name).
+
+    Sequences are dict-only (no bare-string form) — they carry a steps
+    payload, which a bare string cannot hold.
     """
-    if not isinstance(btn_action, dict) or btn_action.get("type") != "command":
+    if not isinstance(btn_action, dict) or btn_action.get("type") not in (
+        "command",
+        "sequence",
+    ):
         return
     device_id = deck.get_serial_number() if deck.is_open() else None
 

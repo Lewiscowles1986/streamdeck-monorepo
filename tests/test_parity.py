@@ -1130,3 +1130,39 @@ def test_animation_action_press_keeps_held_frame_visible(dummy_deck, monkeypatch
     )
     # ...and the press must not consume the shared cycle (still at f1).
     assert next(runner.persistent_images["src"]) == b"f1"
+
+
+# ---------------------------------------------------------------
+# P18 — sequence actions flow through the SAME agent-execution path as
+# command dicts: pressing a button whose action is
+# {"type": "sequence", "steps": [...]} must enqueue the payload verbatim
+# via post_agent_action (the JSON column preserves nested dicts — the
+# round-2 proof). Monkeypatched here so no API server is needed.
+# ---------------------------------------------------------------
+def test_sequence_action_reaches_agent_queue(dummy_deck, monkeypatch):
+    """Pressing a button with a sequence action must post the dict verbatim
+    to the agent-actions queue (same path as commands)."""
+    captured: list[dict] = []
+    monkeypatch.setattr(runner, "post_agent_action", lambda a: captured.append(a) or {})
+
+    action = {
+        "type": "sequence",
+        "steps": [
+            {"type": "command", "executable": "/bin/echo", "arguments": "hi"},
+            {"type": "command", "executable": "/usr/bin/true"},
+        ],
+    }
+    runner.config = {
+        "name": "Seq Dispatch",
+        "device_type": "stream-deck-xl",
+        "buttons": [{"index": 0, "action": action, "idle": {"text": "seq"}}],
+    }
+    runner.get_button_config(0, state=False)
+    runner.key_change_callback(dummy_deck, 0, True)
+
+    assert captured, "a sequence press must enqueue the action"
+    assert captured[0]["action"] == action, (
+        "the sequence payload must pass through verbatim"
+    )
+    assert captured[0]["buttonIndex"] == 0
+    assert captured[0]["deviceId"] == dummy_deck.get_serial_number()
