@@ -5,7 +5,7 @@ contract; `tests/test_parity.py` is its executable form. If a parity test
 fails, the two surfaces have drifted — fix the code or update both sides
 deliberately (and this table) in the same change.
 
-Status: **2026-09-19** — all rows implemented and regression-tested.
+Status: **2026-09-20** — all rows implemented and regression-tested (P13 backend-only; its UI surface is deferred to the merge round).
 
 ## Parity rules (each enforced by a test in `tests/test_parity.py`)
 
@@ -21,6 +21,7 @@ Status: **2026-09-19** — all rows implemented and regression-tested.
 | P8 | Action `timeout` is configurable in the UI and honored by the agent executor. | `test_command_action_timeout_env_dialect`, wire hop in `test_agent_roundtrip` (timeout/env survive queue→poll); E2E: parity-demo "timeout and env vars round-trip through save + reload", parity-fullstack "command action with template variables round-trips through the real API" |
 | P9 | All 8 vendored deck types render a grid in the UI, in both name dialects (kebab ids + human names like "Stream Deck XL"), with a safe fallback for unknown types. | `deviceDimensions()` + `deviceTypeLabel()` helpers; exercised by E2E |
 | P10 | Animated and static images the UI embeds as `data:` URIs (`FileReader.readAsDataURL`) are rendered by the runner through `render_key_image`, which decodes each animation frame once into an `itertools.cycle` cached in `persistent_images` keyed by the full source string — the same source on multiple buttons shares one decode and one cycle. The 30fps `animate` loop (`FRAMES_PER_SECOND`) pushes frames per button via `persistent_image_buttons`. | `test_animated_data_uri_from_frontend_pipeline_decodes_to_frames`, `test_animated_data_uri_is_shared_between_buttons`; E2E `parity-demo`/`parity-fullstack` GIF specs |
+| P13 | Animation pause on a frame: bare-string `"pause"`/`"play"`/`"toggle-animation"` actions and the dict forms `{"type": ...}` hold/resume/flip the shared per-source frame. Pause is **source-keyed** (`paused_images: dict[str, bool]`, shared across buttons — consistent with P10's shared cycle). Optional button-level `animation` block `{paused, frameIndex}` sets the initial pause state and advances the shared cycle `frameIndex` times **before** the first paint. A paused source is neither pulled nor written by the animate tick, so resume continues from the held position. (UI surface for these controls is deferred to the merge round.) | `test_pause_action_holds_frame`, `test_resume_continues_from_held_position`, `test_toggle_animation_action_contract`, `test_start_paused_config` |
 
 ## Backend-only surface, intentionally device/agent-facing (no UI by design)
 

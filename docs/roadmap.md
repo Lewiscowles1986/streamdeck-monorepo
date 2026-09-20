@@ -11,7 +11,7 @@
 ## Round 3 (current)
 
 - **A. Toggle E2E** — toggle editor switch, add/remove state, per-state overrides (image/text/action), save+reload, ButtonCell badge. Plus **device assign→render loop** test: assign config to dummy deck via API → runner renders its buttons (candidate #1).
-- **B. Animation pause (worktree `worktrees/anim-pause`)** — per-source pause on a frame: `"pause"` / `"play"` / `"toggle-animation"` bare-string actions (alongside `"exit"`), optional `frameIndex` advance-and-hold, `paused_images: dict[str, bool]` keyed by source string (shared-pause semantics per P10); config surface `animation: {paused, frameIndex}` in ButtonConfig + ActionEditor UI; pytest: pause holds frame, resume continues from held position, toggle-animation action contract; E2E: UI exposes the controls.
+- **B. Animation pause (worktree `worktrees/anim-pause`) — implementation complete, pending critic+judge.** Per-source pause on a frame: `"pause"` / `"play"` / `"toggle-animation"` bare-string actions (alongside `"exit"`), optional `frameIndex` advance-and-hold, `paused_images: dict[str, bool]` keyed by source string (shared-pause semantics per P10); config surface `animation: {paused, frameIndex}` in ButtonConfig. **UI surface (ActionEditor controls + E2E) explicitly deferred to the merge round.** Parity rule P13 recorded in docs/parity.md; pytest: pause holds frame, resume continues from held position, toggle-animation action contract, start-paused config — mutation-verified.
 - Decision recorded: **shared pause** (source-keyed) — consistent with P10 shared-cycle; per-button pause deferred as a follow-up if needed.
 
 ## Round 4 — command hardening + new action types
