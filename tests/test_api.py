@@ -100,7 +100,15 @@ def test_agent_roundtrip(client):
             "agentId": "agent-1",
             "deviceId": device["id"],
             "buttonIndex": 3,
-            "action": {"type": "command", "executable": "open", "arguments": "-a Finder"},
+            "action": {
+                "type": "command",
+                "executable": "open",
+                "arguments": "-a Finder",
+                # Parity: timeout + env set by the UI must survive the wire
+                # (AgentAction.action is a schema-less JSON column).
+                "timeout": 42,
+                "env": {"SD_BUTTON": "3"},
+            },
         },
     ).json()
     assert queued["status"] == "pending"
@@ -110,6 +118,8 @@ def test_agent_roundtrip(client):
     assert len(pending) == 1
     polled = pending[0]
     assert polled["action"]["executable"] == "open"
+    assert polled["action"]["timeout"] == 42
+    assert polled["action"]["env"] == {"SD_BUTTON": "3"}
     assert polled["status"] == "pending"
 
     # 5. Reports back the result

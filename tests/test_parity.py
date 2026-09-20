@@ -360,6 +360,107 @@ def test_device_config_endpoint_dialect(client):
 # FileReader.readAsDataURL produces them; the runner must decode
 # every frame once and hand back a cycle (see persistent_images).
 # ---------------------------------------------------------------
+# ---------------------------------------------------------------
+# Round 2 (config-editor parity): command action timeout/env dialect,
+# font config flowing into the rendered label, and toggle-state
+# context expansion over a full action dict.
+# ---------------------------------------------------------------
+def test_command_action_timeout_env_dialect():
+    """The queue payload must preserve the ActionEditor's timeout and env
+    fields verbatim (P8: timeout is configurable AND honored)."""
+    action = {
+        "type": "command",
+        "executable": "x",
+        "arguments": "echo hi",
+        "timeout": 90,
+        "env": {"A": "b"},
+    }
+    wrapped = agent.build_agent_action(action, device_id="DUM", button_index=4)
+    assert wrapped["action"]["timeout"] == 90
+    assert wrapped["action"]["env"] == {"A": "b"}
+    assert wrapped["action"]["arguments"] == "echo hi"
+    assert wrapped["buttonIndex"] == 4
+    assert wrapped["deviceId"] == "DUM"
+
+
+def test_font_style_flows_into_rendered_label(dummy_deck, monkeypatch):
+    """render_key_image (the runner entry point for a rendered state) must
+    pass the UI's font config into the actual draw call: color, size and
+    the top-position anchor."""
+    import base64
+    import io
+    import streamdeck.runner as rmod
+    from PIL import Image, ImageDraw, ImageFont
+
+    # 8x8 solid-color PNG, inline — no fixture file needed.
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (10, 20, 30)).save(buf, format="PNG")
+    png_uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+    style = runner.resolve_label_style(
+        {"font": {"family": "serif", "size": 20, "color": "#00ff00", "position": "top"}}
+    )
+
+    text_calls: list[tuple[tuple, dict]] = []
+    font_calls: list[tuple] = []
+    real_draw = ImageDraw.Draw
+    real_font = ImageFont.truetype
+
+    class DrawSpy:
+        def __init__(self, img):
+            self._real = real_draw(img)
+
+        def text(self, *args, **kwargs):
+            text_calls.append((args, kwargs))
+            self._real.text(*args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    def font_spy(path, size):
+        font_calls.append((path, size))
+        return real_font(path, size)
+
+    monkeypatch.setattr(rmod.ImageDraw, "Draw", DrawSpy)
+    monkeypatch.setattr(rmod.ImageFont, "truetype", font_spy)
+
+    runner.render_key_image(dummy_deck, png_uri, "HI", style)
+
+    assert text_calls, "label must be drawn"
+    kwargs = text_calls[0][1]
+    assert kwargs.get("fill") == "#00ff00"
+    assert kwargs.get("anchor") == "ma"  # top position
+    assert font_calls and font_calls[0][1] == 20
+
+
+def test_toggle_state_context_expands_in_action():
+    """expand_template_vars must expand every field of a full CommandAction
+    dict given the runner's press-time context — including env values."""
+    ctx = {
+        "button_index": 3,
+        "device_id": "DUM",
+        "toggle_state": 1,
+        "config_name": "My Config",
+    }
+    action = {
+        "type": "command",
+        "executable": "run {{button_index}}",
+        "arguments": "--state {{toggle_state}}",
+        "cwd": "/tmp/{{config_name}}",
+        "env": {"DEV_ID": "{{device_id}}"},
+        "timeout": 45,
+    }
+    expanded = agent.expand_template_vars(action, ctx)
+    assert expanded == {
+        "type": "command",
+        "executable": "run 3",
+        "arguments": "--state 1",
+        "cwd": "/tmp/My Config",
+        "env": {"DEV_ID": "DUM"},
+        "timeout": 45,
+    }
+
+
 def test_animated_data_uri_from_frontend_pipeline_decodes_to_frames(dummy_deck):
     import base64
     from pathlib import Path

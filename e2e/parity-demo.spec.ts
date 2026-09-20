@@ -166,3 +166,188 @@ test.describe("demo-ui parity: animated GIF upload", () => {
     expect(new Set(uris).size).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------
+// Round 2 — config-editor parity: template variables (P1) and font
+// configuration (P2) as the ActionEditor/ButtonEditor actually
+// render them, with save+reload persistence through the demo API.
+// ---------------------------------------------------------------
+
+test.describe("demo-ui parity: template variables + font config", () => {
+  /** Open button 1's Action tab with a Command action configured. */
+  async function openCommandAction(page: Page) {
+    await createConfigAndOpenButton1(page, `Template Vars E2E ${Date.now()}`);
+    await page.getByText("Action", { exact: true }).first().click();
+    // Radix Select: click the trigger, then the option.
+    const actionTrigger = page.getByRole("combobox").filter({ hasText: /^No Action$/i }).first();
+    await actionTrigger.click();
+    await page.getByRole("option", { name: /^Command$/i }).click();
+    // Choosing Command immediately renders the command fields.
+    await expect(page.getByPlaceholder("/path/to/executable")).toBeVisible();
+  }
+
+  /**
+   * The ghost icon button that opens the template-variables popover for a
+   * field. Structural fact: each label row (div.flex.items-center.justify-
+   * between) holds the field's Label plus exactly one popover trigger —
+   * a Radix PopoverTrigger rendering a ghost icon Button with
+   * aria-haspopup="dialog" (verified: exactly 3 such buttons in the panel).
+   */
+  function templateButton(page: Page, label: string) {
+    return page
+      .locator("div.flex.items-center.justify-between")
+      .filter({ has: page.getByText(label, { exact: true }) })
+      .locator('button[aria-haspopup="dialog"]');
+  }
+
+  test("action editor inserts template variables into the arguments field", async ({
+    page,
+  }) => {
+    await openCommandAction(page);
+
+    // Type into Arguments, then insert {{button_index}} via the popover.
+    const argsInput = page.getByPlaceholder("--flag value");
+    await argsInput.fill("echo ");
+    await templateButton(page, "Arguments").click();
+    await expect(page.getByText("Template Variables")).toBeVisible();
+    await page.getByText("{{button_index}}").first().click();
+    await expect(argsInput).toHaveValue("echo {{button_index}}");
+
+    // The Executable field has its own independent popover/insert.
+    const execInput = page.getByPlaceholder("/path/to/executable");
+    await templateButton(page, "Executable").click();
+    await page.getByText("{{device_id}}").first().click();
+    await expect(execInput).toHaveValue("{{device_id}}");
+    // Arguments must be untouched by the executable insert.
+    await expect(argsInput).toHaveValue("echo {{button_index}}");
+  });
+
+  test("timeout and env vars round-trip through save + reload", async ({
+    page,
+  }) => {
+    await openCommandAction(page);
+
+    await page.getByPlaceholder("/path/to/executable").fill("echo");
+    // Timeout is the only number input in the action panel.
+    const timeoutInput = page.locator('input[type="number"]').first();
+    await timeoutInput.fill("90");
+    await expect(timeoutInput).toHaveValue("90");
+
+    // Env row: fill KEY first, then value (updateEnvVar flushes the pair
+    // into action.env on every keystroke; typing value with an empty key
+    // would leave the value out of action.env).
+    await page.getByRole("button", { name: /^add$/i }).click();
+    await page.getByPlaceholder("KEY").fill("SD_BUTTON");
+    await page.getByPlaceholder("value", { exact: true }).fill("{{button_index}}");
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    await page.reload();
+    await page.locator(".streamdeck-button").first().click();
+    await page.getByText("Action", { exact: true }).first().click();
+
+    await expect(page.locator('input[type="number"]').first()).toHaveValue("90");
+    await expect(page.getByPlaceholder("KEY")).toHaveValue("SD_BUTTON");
+    await expect(page.getByPlaceholder("value", { exact: true })).toHaveValue(
+      "{{button_index}}"
+    );
+
+    // JSON View: the exact wire fields the agent executor consumes.
+    await page.getByRole("tab", { name: /json view/i }).click();
+    const pre = page.locator("pre");
+    await expect(pre).toContainText('"timeout": 90');
+    await expect(pre).toContainText('"env"');
+    await expect(pre).toContainText('"SD_BUTTON"');
+    await expect(pre).toContainText("{{button_index}}");
+  });
+
+  test("font config edits persist through save + reload", async ({ page }) => {
+    await createConfigAndOpenButton1(page, `Font Cfg E2E ${Date.now()}`);
+
+    // Idle tab is the default — fill the text and font controls.
+    const textInput = page.getByPlaceholder("Button text");
+    await textInput.fill("HELLO");
+
+    await page.getByRole("combobox").filter({ hasText: /^Sans Serif$/i }).click();
+    await page.getByRole("option", { name: /^Serif$/i }).click();
+
+    const sizeInput = page.locator('input[type="number"]').first();
+    await sizeInput.fill("20");
+
+    // Stable structural selector for the hex color input: inside the grid
+    // cell that holds the "Text Color" label, the non-color input is the
+    // hex field (the color swatch is input[type=color]).
+    const colorCell = page
+      .locator("div.grid > div")
+      .filter({ has: page.getByText("Text Color", { exact: true }) })
+      .first();
+    const hex = colorCell.locator('input:not([type="color"])');
+    await hex.fill("#00ff00");
+
+    await page.getByRole("combobox").filter({ hasText: /^Center$/i }).click();
+    await page.getByRole("option", { name: /^Top$/i }).click();
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    await page.reload();
+    await page.locator(".streamdeck-button").first().click();
+
+    await expect(page.getByPlaceholder("Button text")).toHaveValue("HELLO");
+    await expect(
+      page.getByRole("combobox").filter({ hasText: /^Serif$/i })
+    ).toBeVisible();
+    await expect(page.locator('input[type="number"]').first()).toHaveValue("20");
+    await expect(hex).toHaveValue("#00ff00");
+    await expect(
+      page.getByRole("combobox").filter({ hasText: /^Top$/i })
+    ).toBeVisible();
+
+    // JSON View: the wire dialect the runner's resolve_label_style reads.
+    await page.getByRole("tab", { name: /json view/i }).click();
+    const pre = page.locator("pre");
+    await expect(pre).toContainText('"font"');
+    await expect(pre).toContainText('"family": "serif"');
+    await expect(pre).toContainText('"position": "top"');
+  });
+
+  test("pressed-state image and text are independent from idle", async ({
+    page,
+  }) => {
+    await createConfigAndOpenButton1(page, `Pressed State E2E ${Date.now()}`);
+
+    // Upload to the PRESSED tab.
+    await page.getByRole("tab", { name: "Pressed" }).click();
+    await page.locator('input[type="file"]').setInputFiles(RED_BLUE_GIF);
+    await expect(page.getByAltText("Button preview")).toBeVisible();
+    await expect(page.getByText("GIF", { exact: true })).toBeVisible();
+    await page.getByPlaceholder("Button text").fill("PRESSED");
+
+    // IDLE tab must still be empty — states are independent.
+    await page.getByRole("tab", { name: "Idle" }).click();
+    await expect(page.getByPlaceholder("Button text")).toHaveValue("");
+    await expect(page.getByText("GIF", { exact: true })).toBeHidden();
+
+    // Save + reload: both states persist independently.
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    await page.reload();
+    await page.locator(".streamdeck-button").first().click();
+
+    await expect(page.getByPlaceholder("Button text")).toHaveValue("");
+    await expect(page.getByText("GIF", { exact: true })).toBeHidden();
+
+    await page.getByRole("tab", { name: "Pressed" }).click();
+    await expect(page.getByAltText("Button preview")).toBeVisible();
+    await expect(page.getByText("GIF", { exact: true })).toBeVisible();
+    await expect(page.getByPlaceholder("Button text")).toHaveValue("PRESSED");
+  });
+});

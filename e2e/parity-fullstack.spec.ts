@@ -116,3 +116,55 @@ test.describe("full-stack parity: animated GIF over the real API", () => {
     expect(body).toContain(`"name":"${configName}"`);
   });
 });
+
+// ---------------------------------------------------------------
+// Round 2 — command actions with template variables over the real
+// API: the queue payload the agent executes must round-trip
+// executable/arguments/timeout verbatim through PUT/GET /config/{id}.
+// ---------------------------------------------------------------
+test.describe("full-stack parity: command actions over the real API", () => {
+  test("command action with template variables round-trips through the real API", async ({
+    page,
+  }) => {
+    const configName = `Command API E2E ${Date.now()}`;
+    await createConfigAndOpenButton1(page, configName);
+
+    await page.getByText("Action", { exact: true }).first().click();
+    // Radix Select: trigger shows the current value ("No Action").
+    await page
+      .getByRole("combobox")
+      .filter({ hasText: /^No Action$/i })
+      .first()
+      .click();
+    await page.getByRole("option", { name: /^Command$/i }).click();
+
+    await page.getByPlaceholder("/path/to/executable").fill("/usr/bin/env");
+    await page.getByPlaceholder("--flag value").fill("echo {{button_index}}");
+    // Timeout is the only number input in the action panel.
+    await page.locator('input[type="number"]').first().fill("42");
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    // Round-trip through the real API — same absolute-URL pattern as the
+    // GIF spec (page.request is scoped to :8081, the API lives on :8000).
+    // Structural assertion via response.json(): does not depend on FastAPI's
+    // compact separators, and toMatchObject pins the nested action fields.
+    const configId = page.url().split("/").filter(Boolean).pop();
+    expect(configId, "URL must end in the config id").toBeTruthy();
+    const response = await page.request.get(`http://localhost:8000/config/${configId}`);
+    expect(response.ok()).toBeTruthy();
+    const config = await response.json();
+    const commandAction = Object.values(config.buttons)
+      .map((b) => (b as { action?: { type?: string } }).action)
+      .find((a) => a?.type === "command");
+    expect(commandAction).toMatchObject({
+      executable: "/usr/bin/env",
+      arguments: "echo {{button_index}}",
+      timeout: 42,
+    });
+  });
+});
+
