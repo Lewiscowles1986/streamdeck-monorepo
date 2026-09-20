@@ -12,6 +12,7 @@ from fractions import Fraction
 import itertools
 import json
 import base64
+import os
 from pathlib import Path
 import time
 import requests
@@ -199,10 +200,13 @@ def render_key_style(btn_cfg: dict) -> dict:
 def get_button_config(key_index, state):
     """
     Looks up key metadata from the active config, including toggle states.
+    Corrupt configs (buttons = None, config = None) yield the blank-key
+    dict instead of raising — configs arrive from the API/DB and must be
+    defended against.
     """
     old_state = buttons.get(key_index)
 
-    for btn in config["buttons"]:
+    for btn in (config or {}).get("buttons") or []:
         if btn["index"] == key_index:
             if old_state is None:
                 buttons[key_index] = {"state": 0, "action": btn.get("action")}
@@ -252,7 +256,23 @@ def update_key_image(deck, key, state):
     # an already-registered animated source can be skipped while paused.
     was_cached = btn_cfg["image"] in persistent_images
 
-    image = render_key_image(deck, btn_cfg["image"], text, label_style)
+    try:
+        image = render_key_image(deck, btn_cfg["image"], text, label_style)
+    except Exception as err:
+        # Crash-safety: a corrupt/undecodable image source (bad data URI,
+        # truncated file, PIL explosion) must fall back to the blank key
+        # instead of propagating — this runs inside the key callback and
+        # the animate loop, neither of which may die over one bad source.
+        print(f"[RENDER] image render failed ({err}): {str(btn_cfg['image'])[:60]}")
+        image = None
+    if image is None:
+        try:
+            with deck:
+                deck.set_key_image(key, BLANK_IMAGE)
+        except Exception as err:
+            print(f"[RENDER] blank repaint failed ({err}): key={key}")
+        return
+
     if btn_cfg["image"] in persistent_images:
         persistent_image_buttons[key] = btn_cfg["image"]
         _apply_button_animation_config(btn_cfg, btn_cfg["image"])
@@ -267,10 +287,17 @@ def update_key_image(deck, key, state):
         # write. A paused deck keeps its frame across button presses.
         return
 
-    with deck:
-        deck.set_key_image(
-            key, next(image) if isinstance(image, Iterator) else image
-        )
+    try:
+        with deck:
+            deck.set_key_image(
+                key, next(image) if isinstance(image, Iterator) else image
+            )
+    except TransportError:
+        raise  # deck-gone: the animate loop / runner main loop handles it
+    except Exception as err:
+        # A failed repaint must not propagate into the key callback (a
+        # raising callback can break the StreamDeck library's delivery).
+        print(f"[RENDER] key repaint failed ({err}): key={key}")
 
 
 def _apply_button_animation_config(btn_cfg: dict, source: str) -> None:
@@ -285,10 +312,13 @@ def _apply_button_animation_config(btn_cfg: dict, source: str) -> None:
     animation = btn_cfg.get("animation") or {}
     if not isinstance(animation, dict):
         return
-    frame_index = animation.get("frameIndex")
-    if frame_index:
+    try:
+        frame_index = int(animation.get("frameIndex") or 0)
+    except (TypeError, ValueError):
+        frame_index = 0  # corrupt frameIndex: best-effort means skip it
+    if frame_index > 0:
         cycle = persistent_images.get(source)
-        for _ in range(int(frame_index)):
+        for _ in range(frame_index):
             try:
                 next(cycle)
             except (StopIteration, TypeError):
@@ -369,6 +399,16 @@ def key_change_callback(deck, key, state):
     if key >= deck.key_count():
         return
 
+    # Everything below is wrapped in a catch-all: a raising callback can
+    # break the StreamDeck library's callback delivery (every later press
+    # silently lost), so NO action may propagate an exception out of here.
+    try:
+        _handle_key_change(deck, key, state, btn_action)
+    except Exception as err:
+        print(f"[EVENT] key callback error (runner survives): {err}")
+
+
+def _handle_key_change(deck, key, state, btn_action) -> None:
     if btn_action == "exit" and state:
         print("Exiting application as per button action.")
         closed_event.set()
@@ -398,6 +438,23 @@ def key_change_callback(deck, key, state):
         # already shows the correct frame — held while paused, and the
         # animate loop continues it on the next tick when playing.
         return
+
+    # P15: switch-config. Bare-string "switch-config:<id>" and the dict
+    # form {"type": "switch-config", "configId": "..."} swap the active
+    # config and re-render; failures keep the current config (crash-safe
+    # inside switch_config, which also means no repaint here on failure —
+    # the button simply keeps working for the next press).
+    switch_request = None
+    if isinstance(btn_action, str) and btn_action.startswith("switch-config:"):
+        switch_request = btn_action.split(":", 1)[1]
+    elif isinstance(btn_action, dict) and btn_action.get("type") == "switch-config":
+        switch_request = btn_action.get("configId")
+    if switch_request and state:
+        switched = switch_config(deck, str(switch_request))
+        if switched:
+            return
+        # Unswitched (unknown id / API down): fall through to the normal
+        # press handling so the button still repaints.
 
     if state and isinstance(btn_action, dict):
         dispatch_action(deck, key, btn_action)
@@ -452,6 +509,51 @@ def fetch_assigned_config(api: str, device_id: str) -> dict | None:
     return None
 
 
+def fetch_config_by_id(api: str, config_id: str) -> dict | None:
+    """Fetch a single config by id (GET /config/{id}) — the runner-side
+    half of the switch-config action (P15). Returns None on any failure
+    (unknown id, API down); the caller keeps its current config then."""
+    try:
+        response = requests.get(f"{api}/config/{config_id}", timeout=5)
+        if response.status_code == 200:
+            return response.json()
+        print(f"[CONFIG] switch-config: config '{config_id}' not found "
+              f"(HTTP {response.status_code})")
+    except Exception as err:
+        print(f"[CONFIG] switch-config: could not fetch '{config_id}': {err}")
+    return None
+
+
+def api_base() -> str:
+    """The REST API base URL the runner talks to (same default as the CLI)."""
+    return os.getenv("STREAMDECK_API", "http://localhost:8000").rstrip("/")
+
+
+def switch_config(deck, config_id: str) -> bool:
+    """Swap the runner's active config (P15). Fetches the new config from
+    the API, assigns it to the module `config`, resets the button state
+    dict and re-renders every key at idle. Crash-safe: an unknown config
+    or an unreachable API logs and keeps the CURRENT config; the return
+    value says whether a switch happened."""
+    global config
+    fetched = fetch_config_by_id(api_base(), config_id)
+    if not fetched:
+        return False
+
+    config = fetched
+    buttons.clear()
+    paused_images.clear()
+
+    try:
+        key_count = deck.key_count()
+        for key in range(key_count):
+            update_key_image(deck, key, False)
+    except Exception as err:
+        # Never let a render hiccup undo the config swap itself.
+        print(f"[CONFIG] switch-config: re-render failed: {err}")
+    return True
+
+
 # -------------------------
 # Main Logic
 # -------------------------
@@ -460,17 +562,29 @@ def animate_tick(deck) -> None:
     to the former inline loop body). Pulls the next frame for every playing
     source and writes it to every button registered to show it. A PAUSED
     source is neither pulled nor written — the cycle retains its position,
-    so the held frame stays on deck and resume continues from it."""
+    so the held frame stays on deck and resume continues from it.
+    A source whose iterator is exhausted/corrupt (or a key whose write
+    hits a transport error) is skipped — one bad frame must not stop the
+    tick from animating the remaining sources and buttons."""
     img: dict[str, bytes] = {}
     with deck:
         for source, image in persistent_images.items():
             if isinstance(image, Iterator) and paused_images.get(source):
                 continue
-            img[source] = next(image)
+            try:
+                img[source] = next(image)
+            except Exception as err:  # exhausted/broken iterator: skip source
+                print(f"[ANIMATE] skipping source ({err}): {str(source)[:60]}")
+                continue
         for key, source in persistent_image_buttons.items():
             image = img.get(source)
             if image:
-                deck.set_key_image(key, image)
+                try:
+                    deck.set_key_image(key, image)
+                except TransportError:
+                    raise  # the animate loop treats this as deck-gone
+                except Exception as err:
+                    print(f"[ANIMATE] key write failed ({err}): key={key}")
 
 
 # -------------------------
@@ -556,8 +670,9 @@ def main(args) -> None:
 
         if all(
             [
-                deck.deck_type().lower() != config["device_type"].lower(),
-                deck.deck_type().lower().replace(" ", "-") != config["device_type"].lower(),
+                deck.deck_type().lower() != str(config.get("device_type", "")).lower(),
+                deck.deck_type().lower().replace(" ", "-")
+                != str(config.get("device_type", "")).lower().replace(" ", "-"),
                 args.ignore_device_type_check is False,
             ]
         ):

@@ -16,8 +16,15 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import type { ButtonAction, CommandAction } from "@/types/streamdeck";
+import type {
+  ButtonAction,
+  CommandAction,
+  SwitchConfigAction,
+  StreamDeckConfig,
+} from "@/types/streamdeck";
 import { TEMPLATE_VARIABLES } from "@/types/streamdeck";
+import { useQuery } from "@tanstack/react-query";
+import { configsApi } from "@/lib/api";
 
 interface ActionEditorProps {
   action?: ButtonAction | null;
@@ -32,6 +39,15 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
   );
 
   const commandAction = action?.type === "command" ? action : null;
+  const switchAction = action?.type === "switch-config" ? action : null;
+
+  // The switch-config picker lists every config in the store (demo mock or
+  // real API — configsApi.getAll serves both).
+  const { data: configs = [] } = useQuery({
+    queryKey: ["configs"],
+    queryFn: configsApi.getAll,
+    enabled: action?.type === "switch-config",
+  });
 
   const updateCommand = (updates: Partial<CommandAction>) => {
     const newAction: CommandAction = {
@@ -99,7 +115,15 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
       <div className="space-y-2">
         <Label>Action Type</Label>
         <Select
-          value={action?.type === "exit" ? "exit" : action ? "command" : "none"}
+          value={
+            action?.type === "exit"
+              ? "exit"
+              : action?.type === "switch-config"
+                ? "switch-config"
+                : action
+                  ? "command"
+                  : "none"
+          }
           onValueChange={(value) => {
             if (value === "none") {
               onChange(null);
@@ -107,6 +131,9 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
               // The runner treats a bare-string/exit action as the shutdown
               // button; represented as {"type": "exit"} in the config JSON.
               onChange({ type: "exit" });
+            } else if (value === "switch-config") {
+              // P15: the runner swaps its active config for this one.
+              onChange({ type: "switch-config", configId: "" });
             } else {
               updateCommand({});
             }
@@ -118,6 +145,7 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
           <SelectContent>
             <SelectItem value="none">No Action</SelectItem>
             <SelectItem value="command">Command</SelectItem>
+            <SelectItem value="switch-config">Switch Config</SelectItem>
             <SelectItem value="exit">Exit (shut down the runner)</SelectItem>
           </SelectContent>
         </Select>
@@ -130,8 +158,43 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
         </p>
       )}
 
+      {switchAction && (
+        <SwitchConfigFields
+          action={switchAction}
+          configs={configs}
+          onChange={onChange}
+        />
+      )}
+
       {commandAction && (
         <>
+          <div className="space-y-2">
+            <Label>Launch Mode</Label>
+            <Select
+              value={commandAction.mode || "attached"}
+              onValueChange={(value) =>
+                updateCommand({ mode: value as "attached" | "detached" })
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="attached">
+                  Attached (wait for completion)
+                </SelectItem>
+                <SelectItem value="detached">
+                  Detached (fire and forget)
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Attached waits for the command and reports its output. Detached
+              starts it and moves on — the process keeps running after the
+              agent stops (no timeout, no output capture).
+            </p>
+          </div>
+
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label>Executable</Label>
@@ -227,6 +290,53 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * P15 switch-config fields: a config picker (Select listing every config
+ * from the API/demo store) plus a manual id input. Choosing from the list
+ * fills the input; the JSON wire form is
+ * {"type": "switch-config", "configId": "..."}.
+ */
+function SwitchConfigFields({
+  action,
+  configs,
+  onChange,
+}: {
+  action: SwitchConfigAction;
+  configs: StreamDeckConfig[];
+  onChange: (action: ButtonAction | null) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>Target Config</Label>
+      <Select
+        value={action.configId || undefined}
+        onValueChange={(value) => onChange({ type: "switch-config", configId: value })}
+      >
+        <SelectTrigger>
+          <SelectValue placeholder={configs.length ? "Pick a config…" : "No configs yet"} />
+        </SelectTrigger>
+        <SelectContent>
+          {configs.map((config) => (
+            <SelectItem key={config.id} value={config.id!}>
+              {config.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Input
+        value={action.configId}
+        onChange={(e) => onChange({ type: "switch-config", configId: e.target.value })}
+        placeholder="Config ID (from the picker or pasted)"
+      />
+      <p className="text-xs text-muted-foreground">
+        Pressing this button makes the device runner switch to the selected
+        configuration and re-render every key. Unknown ids are ignored at
+        press time (the current config stays active).
+      </p>
     </div>
   );
 }

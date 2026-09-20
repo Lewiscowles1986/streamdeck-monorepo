@@ -494,3 +494,92 @@ test.describe("demo-ui parity: toggle states", () => {
     ).toBeVisible();
   });
 });
+
+// ---------------------------------------------------------------
+// Round 4 (P14/P15) — launch mode (attached/detached) and the
+// switch-config action as the ActionEditor hosts them.
+// ---------------------------------------------------------------
+test.describe("demo-ui parity: launch mode + switch-config", () => {
+  /** Open button 1's Action tab with a Command action configured. */
+  async function openCommandAction(page: Page) {
+    await createConfigAndOpenButton1(page, `Launch Mode E2E ${Date.now()}`);
+    await page.getByText("Action", { exact: true }).first().click();
+    const actionTrigger = page
+      .getByRole("combobox")
+      .filter({ hasText: /^No Action$/i })
+      .first();
+    await actionTrigger.click();
+    await page.getByRole("option", { name: /^Command$/i }).click();
+    await expect(page.getByPlaceholder("/path/to/executable")).toBeVisible();
+  }
+
+  test("command action exposes the launch-mode select defaulting to attached", async ({
+    page,
+  }) => {
+    await openCommandAction(page);
+
+    // Mode select defaults to Attached.
+    await expect(
+      page.getByRole("combobox").filter({ hasText: /^Attached \(wait for completion\)$/i })
+    ).toBeVisible();
+
+    // Switch it to Detached.
+    await page
+      .getByRole("combobox")
+      .filter({ hasText: /^Attached \(wait for completion\)$/i })
+      .click();
+    await page.getByRole("option", { name: /fire and forget/i }).click();
+    await expect(
+      page.getByRole("combobox").filter({ hasText: /^Detached/i })
+    ).toBeVisible();
+
+    // JSON View: the exact wire field the agent executor consumes (P14).
+    await page.getByRole("tab", { name: /json view/i }).click();
+    await expect(page.locator("pre")).toContainText('"mode": "detached"');
+  });
+
+  test("attached mode stays implicit (default) in the JSON", async ({ page }) => {
+    await openCommandAction(page);
+    await page.getByPlaceholder("/path/to/executable").fill("echo");
+
+    await page.getByRole("tab", { name: /json view/i }).click();
+    const pre = page.locator("pre");
+    await expect(pre).toContainText('"executable": "echo"');
+    await expect(pre).not.toContainText('"mode"');
+  });
+
+  test("switch-config action offers a config picker and writes the wire form", async ({
+    page,
+  }) => {
+    // Seed a second config first so the picker has an entry to select.
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("link", { name: /configurations/i }).click();
+    await page.getByRole("button", { name: /new config/i }).click();
+    const targetName = `Switch Target ${Date.now()}`;
+    await page.getByPlaceholder(/my gaming layout/i).fill(targetName);
+    await page.getByRole("button", { name: /^create$/i }).click();
+    await expect(page.getByText(/visual editor/i).first()).toBeVisible();
+
+    // Now create the config under edit with the switch-config action.
+    await createConfigAndOpenButton1(page, `Switch Source ${Date.now()}`);
+    await page.getByText("Action", { exact: true }).first().click();
+    const actionTrigger = page
+      .getByRole("combobox")
+      .filter({ hasText: /^No Action$/i })
+      .first();
+    await actionTrigger.click();
+    await page.getByRole("option", { name: /^Switch Config$/i }).click();
+
+    // The picker must appear and list the other config.
+    await expect(page.getByText("Target Config")).toBeVisible();
+    await page.getByRole("combobox").filter({ hasText: /no configs yet|pick a config/i }).click();
+    await page.getByRole("option", { name: targetName }).click();
+
+    // JSON View: the exact wire form the runner's key callback consumes (P15).
+    await page.getByRole("tab", { name: /json view/i }).click();
+    const pre = page.locator("pre");
+    await expect(pre).toContainText('"switch-config"');
+    await expect(pre).toContainText('"configId"');
+  });
+});

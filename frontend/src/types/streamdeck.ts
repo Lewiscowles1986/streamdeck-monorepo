@@ -41,13 +41,29 @@ export interface CommandAction {
   cwd?: string;
   env?: Record<string, string>;
   timeout?: number;
+  /**
+   * Launch mode (P14): "attached" (default) waits for completion and
+   * reports the result; "detached" fires the process and forgets it (the
+   * child survives the agent — Popen start_new_session on the backend).
+   */
+  mode?: "attached" | "detached";
 }
 
 export interface ExitAction {
   type: "exit";
 }
 
-export type ButtonAction = CommandAction | ExitAction;
+/**
+ * Switch-config action (P15): pressing the button makes the device runner
+ * swap its active config for the one with this id (fetched from the API),
+ * re-render every key, and continue running.
+ */
+export interface SwitchConfigAction {
+  type: "switch-config";
+  configId: string;
+}
+
+export type ButtonAction = CommandAction | ExitAction | SwitchConfigAction;
 
 // A nominated computer running `streamdeck agent` (backend Agent model).
 // NOTE: the Agent model intentionally has NO camelCase aliases — the wire

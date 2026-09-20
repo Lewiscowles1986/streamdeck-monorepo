@@ -815,6 +815,244 @@ def test_start_paused_config(dummy_deck, monkeypatch):
     assert len(writes) == 1
 
 
+# ---------------------------------------------------------------
+# Round 4 (P14/P15) — command launch modes + switch-config action.
+# ---------------------------------------------------------------
+
+def test_config_switch_action_swaps_config_and_rerenders(dummy_deck, monkeypatch):
+    """P15 dict form: {"type": "switch-config", "configId": "..."} — the
+    runner fetches that config from the API, swaps the module `config`,
+    and re-renders every key (state False)."""
+    runner.config = {
+        "name": "Old Config",
+        "device_type": "stream-deck-xl",
+        "buttons": [{"index": 0, "idle": {"text": "old"}}],
+    }
+    new_config = {
+        "name": "New Config",
+        "device_type": "stream-deck-xl",
+        "buttons": [{"index": 0, "idle": {"text": "new"}}],
+    }
+
+    class FakeResponse:
+        status_code = 200
+        ok = True
+
+        def json(self):
+            return new_config
+
+    monkeypatch.setattr(runner, "requests", type("R", (), {"get": staticmethod(lambda *a, **k: FakeResponse())}))
+
+    calls: list[tuple[int, bool]] = []
+
+    def spy_update_key_image(deck, key, state):
+        calls.append((key, state))
+
+    monkeypatch.setattr(runner, "update_key_image", spy_update_key_image)
+
+    runner.get_button_config(0, state=False)
+    runner.buttons[0]["action"] = {"type": "switch-config", "configId": "cfg-2"}
+    runner.key_change_callback(dummy_deck, 0, True)
+
+    assert runner.config["name"] == "New Config", (
+        "switch-config must swap the active config"
+    )
+    # Re-render: EVERY deck key at idle (state=False) — the deck is a 32-key
+    # XL, and a swap repaints the whole surface, not just pressed buttons.
+    assert calls[0] == (0, False)
+    assert all(state is False for _, state in calls)
+    assert len(calls) == dummy_deck.key_count()
+
+
+def test_config_switch_bare_string_form(dummy_deck, monkeypatch):
+    """P15 bare-string form: "switch-config:<config_id>" is equivalent to
+    the dict form."""
+    runner.config = {
+        "name": "Old Config",
+        "device_type": "stream-deck-xl",
+        "buttons": [{"index": 0, "idle": {"text": "old"}}],
+    }
+    new_config = {
+        "name": "Switched",
+        "device_type": "stream-deck-xl",
+        "buttons": [{"index": 0, "idle": {"text": "switched"}}],
+    }
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return new_config
+
+    monkeypatch.setattr(runner.requests, "get", lambda *a, **k: FakeResponse())
+
+    runner.get_button_config(0, state=False)
+    runner.buttons[0]["action"] = "switch-config:cfg-42"
+    runner.key_change_callback(dummy_deck, 0, True)
+
+    assert runner.config["name"] == "Switched"
+
+
+def test_config_switch_unknown_config_keeps_current(dummy_deck, monkeypatch):
+    """Crash-safety: a 404 (or any non-200) must keep the CURRENT config
+    and must not raise — a bad id on a button can never take the runner
+    down."""
+    original = {
+        "name": "Keep Me",
+        "device_type": "stream-deck-xl",
+        "buttons": [{"index": 0, "idle": {"text": "keep"}}],
+    }
+    runner.config = original
+    calls: list[tuple[int, bool]] = []
+
+    class FakeResponse:
+        status_code = 404
+
+        def json(self):
+            return {"detail": "Configuration not found"}
+
+    monkeypatch.setattr(runner.requests, "get", lambda *a, **k: FakeResponse())
+
+    def spy_update_key_image(deck, key, state):
+        calls.append((key, state))
+
+    monkeypatch.setattr(runner, "update_key_image", spy_update_key_image)
+
+    runner.get_button_config(0, state=False)
+    runner.buttons[0]["action"] = {"type": "switch-config", "configId": "ghost"}
+    runner.key_change_callback(dummy_deck, 0, True)  # must not raise
+
+    assert runner.config is original
+    # Design decision (documented): a FAILED switch falls through to normal
+    # press handling, so the pressed button still repaints (its own key only
+    # — no full-deck re-render, since the config didn't change).
+    assert calls == [(0, True)]
+
+
+def test_config_switch_api_down_keeps_current_config(dummy_deck, monkeypatch):
+    """Crash-safety: the API being unreachable (requests raising) must log
+    and keep the current config, never propagate."""
+    original = {
+        "name": "Keep Me",
+        "device_type": "stream-deck-xl",
+        "buttons": [{"index": 0, "idle": {"text": "keep"}}],
+    }
+    runner.config = original
+
+    def boom(*a, **k):
+        raise ConnectionError("API down")
+
+    monkeypatch.setattr(runner.requests, "get", boom)
+
+    runner.get_button_config(0, state=False)
+    runner.buttons[0]["action"] = {"type": "switch-config", "configId": "cfg-9"}
+    runner.key_change_callback(dummy_deck, 0, True)  # must not raise
+
+    assert runner.config is original
+
+
+def test_fetch_config_by_id_uses_config_endpoint(monkeypatch):
+    """fetch_config_by_id mirrors fetch_assigned_config: GET /config/{id}
+    and returns the parsed body (the config dict itself)."""
+    seen: dict = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"name": "Fetched", "buttons": []}
+
+    def fake_get(url, timeout=None):
+        seen["url"] = url
+        return FakeResponse()
+
+    monkeypatch.setattr(runner.requests, "get", fake_get)
+    result = runner.fetch_config_by_id("http://localhost:8000", "abc123")
+    assert seen["url"] == "http://localhost:8000/config/abc123"
+    assert result == {"name": "Fetched", "buttons": []}
+
+
+# ---------------------------------------------------------------
+# Round 4 hardening sweep (crash-safety): no exception raised inside
+# the key callback may kill the runner — the StreamDeck library stops
+# delivering callbacks from a raising handler, which would silently
+# brick every button press until restart.
+# ---------------------------------------------------------------
+def test_key_callback_survives_dispatch_failure(dummy_deck, monkeypatch):
+    """A dispatch_action that raises (API explodes mid-press) must not
+    propagate out of key_change_callback."""
+    runner.config = {
+        "device_type": "stream-deck-xl",
+        "buttons": [
+            {"index": 0, "action": {"type": "command", "executable": "x"}}
+        ],
+    }
+
+    def explode(deck, key, btn_action):
+        raise RuntimeError("simulated dispatch explosion")
+
+    monkeypatch.setattr(runner, "post_agent_action", explode)
+    runner.get_button_config(0, state=False)
+
+    # Must NOT raise, even though post_agent_action explodes before the
+    # runner's own try/except around it.
+    runner.key_change_callback(dummy_deck, 0, True)
+
+
+def test_key_callback_survives_repaint_failure(dummy_deck, monkeypatch):
+    """The repaint after the action path raising must not kill the
+    callback either (update_key_image hitting a transport error, say)."""
+    runner.config = {
+        "device_type": "stream-deck-xl",
+        "buttons": [{"index": 0, "idle": {"text": "x"}}],
+    }
+
+    def explode(deck, key, state):
+        raise RuntimeError("simulated repaint explosion")
+
+    monkeypatch.setattr(runner, "update_key_image", explode)
+    runner.get_button_config(0, state=False)
+
+    runner.key_change_callback(dummy_deck, 0, True)  # must not raise
+
+
+def test_get_button_config_with_corrupt_config_returns_blank():
+    """A corrupt config (buttons = None) must yield the blank-key dict, not
+    a TypeError — configs arrive from the API/DB and must be defended."""
+    runner.config = {"name": "Corrupt", "buttons": None}
+    runner.buttons.clear()
+
+    cfg = runner.get_button_config(0, state=False)
+    assert cfg == {"image": None, "text": None}
+
+
+def test_get_button_config_with_config_none_returns_blank():
+    runner.config = None
+    runner.buttons.clear()
+
+    cfg = runner.get_button_config(3, state=False)
+    assert cfg == {"image": None, "text": None}
+
+
+def test_detached_result_status_is_detached_via_roundtrip_wire():
+    """P14 wire contract: AgentAction.action is a schema-less JSON column —
+    the mode field must pass through build_agent_action + a simulated
+    JSON round-trip verbatim, exactly like timeout/env (P8)."""
+    import json as _json
+
+    action = {
+        "type": "command",
+        "executable": "/usr/bin/open",
+        "arguments": "-a Safari",
+        "mode": "detached",
+    }
+    wrapped = agent.build_agent_action(action, device_id="DUM", button_index=1)
+    assert wrapped["action"]["mode"] == "detached"
+    # JSON column round-trip: mode survives verbatim.
+    roundtripped = _json.loads(_json.dumps(wrapped["action"]))
+    assert roundtripped["mode"] == "detached"
+
+
 def test_pause_is_shared_across_buttons(dummy_deck, monkeypatch):
     """P13 shared-pause semantics: pause is keyed by the image SOURCE, so a
     pause action on ONE button holds the frame for EVERY button showing

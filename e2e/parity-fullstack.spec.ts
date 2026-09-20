@@ -227,3 +227,108 @@ test.describe("full-stack parity: device config assignment", () => {
   });
 });
 
+// ---------------------------------------------------------------
+// Round 4 (P15) — switch-config action over the real API: two configs
+// created via the API, the button action set to Switch Config targeting
+// config B through the UI picker, and the saved wire form asserted
+// structurally through GET /config/{id}.
+// ---------------------------------------------------------------
+test.describe("full-stack parity: switch-config action", () => {
+  test("switch-config action round-trips the target config id through the real API", async ({
+    page,
+    request,
+  }) => {
+    // 1. Create config B (the switch TARGET) directly via the API.
+    const targetName = `Switch Target API ${Date.now()}`;
+    const createB = await request.post("http://localhost:8000/config", {
+      data: { name: targetName, deviceType: "stream-deck-xl", buttons: [] },
+    });
+    expect(createB.ok()).toBeTruthy();
+    const configB = await createB.json();
+    expect(configB.id).toBeTruthy();
+
+    // 2. Create config A in the UI and set button 1's action to Switch
+    //    Config targeting B via the picker.
+    const configName = `Switch Source API ${Date.now()}`;
+    await createConfigAndOpenButton1(page, configName);
+    await page.getByText("Action", { exact: true }).first().click();
+    await page
+      .getByRole("combobox")
+      .filter({ hasText: /^No Action$/i })
+      .first()
+      .click();
+    await page.getByRole("option", { name: /^Switch Config$/i }).click();
+
+    await expect(page.getByText("Target Config")).toBeVisible();
+    await page
+      .getByRole("combobox")
+      .filter({ hasText: /no configs yet|pick a config/i })
+      .click();
+    await page.getByRole("option", { name: targetName }).click();
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    // 3. Structural round-trip through the real API: the nested action is
+    //    a switch-config pointing at config B's id.
+    const configId = page.url().split("/").filter(Boolean).pop();
+    expect(configId, "URL must end in the config id").toBeTruthy();
+    const response = await request.get(`http://localhost:8000/config/${configId}`);
+    expect(response.ok()).toBeTruthy();
+    const saved = await response.json();
+    const switchAction = Object.values(saved.buttons)
+      .map((b) => (b as { action?: { type?: string } }).action)
+      .find((a) => a?.type === "switch-config");
+    expect(switchAction).toMatchObject({ configId: configB.id });
+
+    // 4. The runner's fetch endpoint serves config B by id (what
+    //    fetch_config_by_id consumes at press time).
+    const fetchedB = await request.get(`http://localhost:8000/config/${configB.id}`);
+    expect(fetchedB.ok()).toBeTruthy();
+    expect((await fetchedB.json()).name).toBe(targetName);
+  });
+
+  test("command action with detached mode round-trips through the real API", async ({
+    page,
+    request,
+  }) => {
+    const configName = `Detached API ${Date.now()}`;
+    await createConfigAndOpenButton1(page, configName);
+
+    await page.getByText("Action", { exact: true }).first().click();
+    await page
+      .getByRole("combobox")
+      .filter({ hasText: /^No Action$/i })
+      .first()
+      .click();
+    await page.getByRole("option", { name: /^Command$/i }).click();
+    await page.getByPlaceholder("/path/to/executable").fill("/usr/bin/open");
+
+    // Mode select: default Attached → switch to Detached.
+    await page
+      .getByRole("combobox")
+      .filter({ hasText: /^Attached \(wait for completion\)$/i })
+      .click();
+    await page.getByRole("option", { name: /fire and forget/i }).click();
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    const configId = page.url().split("/").filter(Boolean).pop();
+    const response = await request.get(`http://localhost:8000/config/${configId}`);
+    expect(response.ok()).toBeTruthy();
+    const config = await response.json();
+    const commandAction = Object.values(config.buttons)
+      .map((b) => (b as { action?: { type?: string } }).action)
+      .find((a) => a?.type === "command");
+    expect(commandAction).toMatchObject({
+      executable: "/usr/bin/open",
+      mode: "detached",
+    });
+  });
+});
+

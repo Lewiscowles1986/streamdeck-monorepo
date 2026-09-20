@@ -36,6 +36,39 @@ TEMPLATE_CONTEXT_KEYS = {
     "time": "",
 }
 
+# Default attached-mode timeout in seconds. A corrupt/non-numeric timeout
+# in an action falls back to this rather than crashing the executor.
+DEFAULT_TIMEOUT = 30
+
+
+def _as_int(value: Any, fallback: int) -> int:
+    """Coerce a JSON-ish value to int with a fallback (crash-safety)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _as_env(value: Any) -> dict:
+    """Coerce an action's env field to a dict of strings; anything that
+    isn't a mapping collapses to {} instead of exploding subprocess."""
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): str(v) for k, v in value.items()}
+
+
+def _as_cwd(value: Any) -> str | None:
+    """Coerce cwd: None/empty → None; a non-directory is ignored (inherit
+    the executor's cwd) rather than raising FileNotFoundError later."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        if Path(value).is_dir():
+            return value
+    except OSError:
+        return None
+    return None
+
 
 def expand_template_vars(value: Any, context: dict[str, Any] | None = None) -> Any:
     """
@@ -131,29 +164,65 @@ def execute(
     ``context`` supplies runtime values for the ``{{...}}`` template
     variables the web UI can insert (button index, device id, toggle state,
     config name). Time tokens are always available.
+
+    Launch modes (P14):
+      - "attached" (default): run with a timeout, wait, capture output and
+        report the result — the pre-existing behavior, now named.
+      - "detached": start the process WITHOUT waiting (Popen with
+        start_new_session=True so it survives the agent) and report
+        status "detached" with the child's pid. No timeout, no capture.
+
+    Crash-safety contract: execute() NEVER raises. Every failure mode —
+    missing executable, nonexistent cwd, corrupt env/timeout/mode, even an
+    internal bug — comes back as a structured result with a "status" key,
+    because this runs inside the agent's polling loop and one bad action
+    must never kill the loop.
     """
-    if action.get("type") != "command":
-        return {"status": "failed", "error": f"unsupported action type {action.get('type')!r}"}
+    try:
+        if not isinstance(action, dict):
+            return {
+                "status": "failed",
+                "error": f"action is not an object: {action!r}",
+            }
 
-    action = expand_template_vars(action, context)
+        if action.get("type") != "command":
+            return {
+                "status": "failed",
+                "error": f"unsupported action type {action.get('type')!r}",
+            }
 
-    executable = action.get("executable")
-    if not executable:
-        return {"status": "failed", "error": "action has no executable"}
+        action = expand_template_vars(action, context)
 
-    argv = [executable]
-    arguments = action.get("arguments")
-    if arguments:
-        # Arguments are a shell-style string in the config format; expand them
-        # with the shell on the agent side so operators can use variables.
-        try:
+        executable = action.get("executable")
+        if not isinstance(executable, str) or not executable:
+            return {"status": "failed", "error": "action has no executable"}
+
+        argv = [executable]
+        arguments = action.get("arguments")
+        if isinstance(arguments, str) and arguments:
+            # Arguments are a shell-style string in the config format;
+            # expand them with the shell on the agent side so operators
+            # can use variables.
             argv = [executable, *arguments.split()]
-        except Exception:
-            argv = [executable, arguments]
+        elif isinstance(arguments, list):
+            argv = [executable, *(str(a) for a in arguments)]
+        elif arguments:
+            argv = [executable, str(arguments)]
 
+        mode = action.get("mode") or "attached"
+        if mode == "detached":
+            return _execute_detached(argv, action)
+        return _execute_attached(argv, action)
+    except Exception as err:  # never let an action kill the agent loop
+        return {"status": "failed", "error": f"executor error: {err}"}
+
+
+def _execute_attached(argv: list[str], action: dict[str, Any]) -> dict[str, Any]:
+    """Attached launch: subprocess.run + wait + capture + report."""
     env = os.environ.copy()
-    env.update(action.get("env") or {})
-    cwd = action.get("cwd") or None
+    env.update(_as_env(action.get("env")))
+    cwd = _as_cwd(action.get("cwd"))
+    timeout = _as_int(action.get("timeout", DEFAULT_TIMEOUT), DEFAULT_TIMEOUT)
 
     try:
         completed = subprocess.run(  # noqa: S603
@@ -162,7 +231,7 @@ def execute(
             env=env,
             capture_output=True,
             text=True,
-            timeout=action.get("timeout", 30),
+            timeout=timeout,
         )
         return {
             "status": "done" if completed.returncode == 0 else "failed",
@@ -170,6 +239,29 @@ def execute(
             "stdout": completed.stdout[-4000:],
             "stderr": completed.stderr[-4000:],
         }
+    except Exception as err:
+        return {"status": "failed", "error": str(err)}
+
+
+def _execute_detached(argv: list[str], action: dict[str, Any]) -> dict[str, Any]:
+    """Detached launch (P14): Popen without waiting, disowned into its own
+    session so the child survives the agent stopping. No output capture,
+    no timeout kill. Any start failure comes back as a failed result."""
+    env = os.environ.copy()
+    env.update(_as_env(action.get("env")))
+    cwd = _as_cwd(action.get("cwd"))
+
+    try:
+        process = subprocess.Popen(  # noqa: S603
+            argv,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return {"status": "detached", "pid": process.pid}
     except Exception as err:
         return {"status": "failed", "error": str(err)}
 
