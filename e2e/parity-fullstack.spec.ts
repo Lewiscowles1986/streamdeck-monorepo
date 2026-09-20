@@ -382,3 +382,53 @@ test.describe("full-stack parity: automatic switching triggers", () => {
   });
 });
 
+// ---------------------------------------------------------------
+// Round 6 (P17) — the completed executable (picked from the
+// CommandInput suggestion list, i.e. a real keyboard interaction,
+// not a fill()) round-trips through the real API.
+// ---------------------------------------------------------------
+test.describe("full-stack parity: command input completion", () => {
+  test("keyboard-completed executable round-trips through the real API", async ({
+    page,
+    request,
+  }) => {
+    const configName = `Command Input API ${Date.now()}`;
+    await createConfigAndOpenButton1(page, configName);
+
+    await page.getByText("Action", { exact: true }).first().click();
+    await page
+      .getByRole("combobox")
+      .filter({ hasText: /^No Action$/i })
+      .first()
+      .click();
+    await page.getByRole("option", { name: /^Command$/i }).click();
+
+    // Complete the executable through the suggestion UI itself: type a
+    // prefix, pick the first suggestion with the keyboard.
+    const execInput = page.getByPlaceholder("/path/to/executable");
+    await execInput.click();
+    await execInput.fill("/usr/bin/o");
+    const list = page.getByTestId("command-suggestion-list");
+    await expect(list).toBeVisible();
+    await expect(list).toContainText("/usr/bin/osascript");
+    await execInput.press("ArrowDown");
+    await execInput.press("Enter");
+    await expect(execInput).toHaveValue("/usr/bin/osascript");
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    const configId = page.url().split("/").filter(Boolean).pop();
+    expect(configId, "URL must end in the config id").toBeTruthy();
+    const response = await request.get(`http://localhost:8000/config/${configId}`);
+    expect(response.ok()).toBeTruthy();
+    const saved = await response.json();
+    const commandAction = Object.values(saved.buttons)
+      .map((b) => (b as { action?: { type?: string } }).action)
+      .find((a) => a?.type === "command");
+    expect(commandAction).toMatchObject({ executable: "/usr/bin/osascript" });
+  });
+});
+

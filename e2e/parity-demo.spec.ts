@@ -649,3 +649,114 @@ test.describe("demo-ui parity: launch mode + switch-config", () => {
     await expect(pre).toContainText('"configId"');
   });
 });
+
+// ---------------------------------------------------------------
+// Round 6 (P17) — command-input completion: the Executable and
+// Arguments fields are CommandInput components (controlled dropdown,
+// NOT a datalist — deterministic E2E). Executable suggests a static
+// COMMON_BINARIES list + the user's typed history (localStorage
+// streamdeck_recent_executables); Arguments suggests flags for known
+// binaries after a leading "-"; both suggest template variables when
+// the value ends with "{{". The label-row popover chips remain the
+// other insertion path — untouched.
+// ---------------------------------------------------------------
+test.describe("demo-ui parity: command input completion", () => {
+  /** Open button 1's Action tab with a Command action configured. */
+  async function openCommandAction(page: Page) {
+    await createConfigAndOpenButton1(page, `Completion E2E ${Date.now()}`);
+    await page.getByText("Action", { exact: true }).first().click();
+    const actionTrigger = page
+      .getByRole("combobox")
+      .filter({ hasText: /^No Action$/i })
+      .first();
+    await actionTrigger.click();
+    await page.getByRole("option", { name: /^Command$/i }).click();
+    await expect(page.getByPlaceholder("/path/to/executable")).toBeVisible();
+  }
+
+  test("executable input suggests known binaries and accepts keyboard selection", async ({
+    page,
+  }) => {
+    await openCommandAction(page);
+    const execInput = page.getByPlaceholder("/path/to/executable");
+    await execInput.click();
+    await execInput.fill("/us");
+    // The suggestion list must contain known binaries matching the prefix.
+    await expect(page.getByTestId("command-suggestion-list")).toBeVisible();
+    const list = page.getByTestId("command-suggestion-list");
+    await expect(list).toContainText("/usr/bin/env");
+    await expect(list).toContainText("/usr/bin/open");
+    // Keyboard semantics: the FIRST suggestion is highlighted on open, so
+    // Enter alone accepts it (visible highlight), and ArrowDown+Enter moves
+    // to the second — proving both direct-accept and navigation.
+    await execInput.press("Enter");
+    await expect(execInput).toHaveValue("/usr/bin/env");
+
+    await execInput.fill("/us");
+    await expect(page.getByTestId("command-suggestion-list")).toBeVisible();
+    await execInput.press("ArrowDown");
+    await execInput.press("Enter");
+    await expect(execInput).toHaveValue("/usr/bin/open");
+  });
+
+  test("template variables complete inline when the value ends with {{", async ({
+    page,
+  }) => {
+    await openCommandAction(page);
+    const argsInput = page.getByPlaceholder("--flag value");
+    await argsInput.click();
+    await argsInput.fill("echo {{");
+    const list = page.getByTestId("command-suggestion-list");
+    await expect(list).toBeVisible();
+    await expect(list).toContainText("{{button_index}}");
+    // Selecting a template variable completes the closing braces too
+    // (first item is highlighted on open → Enter accepts it).
+    await argsInput.press("Enter");
+    await expect(argsInput).toHaveValue("echo {{button_index}}");
+  });
+
+  test("history suggestions appear after save", async ({ page }) => {
+    // /usr/bin/mv-not-a-real-binary is NOT in the static list, so the only
+    // way it can be suggested is via the persisted history.
+    const historyPath = "/usr/bin/mv-completion-history-marker";
+    await openCommandAction(page);
+    const execInput = page.getByPlaceholder("/path/to/executable");
+    await execInput.fill(historyPath);
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    await page.reload();
+    await page.locator(".streamdeck-button").first().click();
+    await page.getByText("Action", { exact: true }).first().click();
+    await expect(page.getByPlaceholder("/path/to/executable")).toBeVisible();
+
+    const execInput2 = page.getByPlaceholder("/path/to/executable");
+    await execInput2.click();
+    await execInput2.fill("/usr/bin/mv-");
+    const list = page.getByTestId("command-suggestion-list");
+    await expect(list).toBeVisible();
+    await expect(list).toContainText(historyPath);
+  });
+
+  test("arguments input suggests flags for known binaries after a dash", async ({
+    page,
+  }) => {
+    await openCommandAction(page);
+    // Known binary context (osascript) + a leading "-" in Arguments.
+    await page.getByPlaceholder("/path/to/executable").fill("/usr/bin/osascript");
+    const argsInput = page.getByPlaceholder("--flag value");
+    await argsInput.click();
+    await argsInput.fill("-");
+    const list = page.getByTestId("command-suggestion-list");
+    await expect(list).toBeVisible();
+    await expect(list).toContainText("-e");
+    // Executable-only flags from other binaries must not leak in.
+    await expect(list).not.toContainText("-a");
+    // Enter accepts the highlighted (first) flag.
+    await argsInput.press("Enter");
+    await expect(argsInput).toHaveValue("-e");
+  });
+});

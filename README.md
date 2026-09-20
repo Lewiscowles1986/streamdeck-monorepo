@@ -43,6 +43,9 @@ uvx . streamdeck ui                                         # full-stack (talks 
 
 # 3) Nominate a computer for actions (edge use-case)
 uvx . streamdeck agent --server http://localhost:8000       # on the target machine
+
+# 4) Shell completion (bash/zsh/fish — typer built-in)
+uvx . streamdeck --install-completion                       # once per shell
 ```
 
 `STREAMDECK_DB` (default `streamdeck.db` in cwd) selects the SQLite file;

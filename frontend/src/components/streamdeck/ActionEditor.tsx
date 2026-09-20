@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { CommandInput } from "./CommandInput";
 import {
   Select,
   SelectContent,
@@ -200,9 +201,12 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
               <Label>Executable</Label>
               <TemplateButton field="executable" />
             </div>
-            <Input
+            {/* P17 completion: static binaries + typed history; template
+                variables complete inline after "{{". Drop-in for the raw
+                Input (same value/onChange contract). */}
+            <CommandInput
               value={commandAction.executable}
-              onChange={(e) => updateCommand({ executable: e.target.value })}
+              onChange={(executable) => updateCommand({ executable })}
               placeholder="/path/to/executable"
             />
           </div>
@@ -212,10 +216,13 @@ export function ActionEditor({ action, onChange }: ActionEditorProps) {
               <Label>Arguments</Label>
               <TemplateButton field="arguments" />
             </div>
-            <Input
+            {/* P17: flags helper for known binaries + inline template vars;
+                executableContext drives the static flag map. */}
+            <CommandInput
               value={commandAction.arguments || ""}
-              onChange={(e) => updateCommand({ arguments: e.target.value })}
+              onChange={(arguments_) => updateCommand({ arguments: arguments_ })}
               placeholder="--flag value"
+              executableContext={commandAction.executable}
             />
           </div>
 

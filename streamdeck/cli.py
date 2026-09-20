@@ -24,7 +24,9 @@ app = typer.Typer(
     name="streamdeck",
     help="Standalone Stream Deck control stack (API, device runner, web UI).",
     no_args_is_help=True,
-    add_completion=False,
+    # Shell completion (--install-completion / --show-completion) is typer's
+    # built-in; leaving it enabled is the whole of P17's CLI half. Do not
+    # disable it again — tests/test_cli.py pins its presence.
 )
 console = Console()
 

@@ -34,10 +34,10 @@
 - **Judge fixes (all mutation-verified):** (1) unconditional watcher start above; (2) demo-api `update()` now CLEARS triggers when the payload omits the key — the builder's version preserved the old block, diverging from the real PUT's replace semantics (the clear E2E never saved+reloaded, so it missed this); (3) watcher `run()` outer containment so an exploding `should_continue_fn` logs and returns instead of raising out of the thread.
 - **Deferred — apply-once keyed on config NAME:** two configs with the same name can suppress each other's applies (the guard compares `name` strings). Config ids exist server-side but not in `--config`-file configs, so name is the only universal key today; duplicate names are plausible but low-probability. Roadmap follow-up: pass the config id through when present and fall back to name.
 
-## Round 6 — text completion
+## Round 6 — text completion: DONE (2026-09-20, builder round)
 
-- **CLI**: typer completion via `streamdeck --install-completion` (click/typer built-in) for zsh/bash/fish.
-- **UI**: completer for command fields (executable path completion against PATH, flag completion for common binaries via a static map), template-var autocomplete in the ActionEditor fields (insert-or-complete inline).
+- **CLI**: DONE — typer's built-in shell completion was silently disabled by `add_completion=False`; removed, so `streamdeck --install-completion` / `--show-completion` (bash/zsh/fish) work. `tests/test_cli.py` (6 subprocess tests) pins the options' presence, the documented command list, a `--show-completion` script, and the `--help` timing bound (imports stay lazy — the smoke `streamdeck --help` never pulls uvicorn/pillow/db at parse time; measured ~0.15s).
+- **UI**: DONE — `CommandInput` (controlled dropdown; datalist rejected as browser-dependent) wired into ActionEditor Executable + Arguments. Executables: static `COMMON_BINARIES` (browser can't scan PATH) + typed history (`localStorage streamdeck_recent_executables`, cap 10, absolute paths only). Arguments: static `COMMON_FLAGS` per known binary after a leading `-`. Both: the 7 template variables complete inline after `{{` (closing braces inserted; label-row popovers remain). First item highlighted on open; Enter/Arrows/Escape/click; blur records history. Mutations (all rebuilt + killed): empty filter → 5 fail; history write removed → history spec fails; flags map disabled → flags spec fails.
 - Deeper automations: multi-step sequences (`{"type":"sequence","steps":[...]}` with optional delays), chained toggle-state actions.
 
 ## Rules of engagement
