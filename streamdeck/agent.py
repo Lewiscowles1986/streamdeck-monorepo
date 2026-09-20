@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import platform
 import socket
+import threading
 import time
 import uuid
 import subprocess
@@ -243,10 +244,25 @@ def _execute_attached(argv: list[str], action: dict[str, Any]) -> dict[str, Any]
         return {"status": "failed", "error": str(err)}
 
 
-def _execute_detached(argv: list[str], action: dict[str, Any]) -> dict[str, Any]:
+def _execute_detached(
+    argv: list[str],
+    action: dict[str, Any],
+    wait_fn=None,
+) -> dict[str, Any]:
     """Detached launch (P14): Popen without waiting, disowned into its own
     session so the child survives the agent stopping. No output capture,
-    no timeout kill. Any start failure comes back as a failed result."""
+    no timeout kill. Any start failure comes back as a failed result.
+
+    Zombie reaping (R5): a detached child that exits while the agent stays
+    up would otherwise leave a zombie entry per finished child. A small
+    DAEMON thread blocks on os.waitpid(pid, 0) — fire-and-forget for the
+    CALLER (execute returns immediately; the thread buries the child
+    later). Reaping is best-effort: a failing/expired waitpid is logged and
+    never affects the returned result.
+
+    ``wait_fn`` is an injectable seam (defaults to os.waitpid) so tests can
+    record or explode the wait deterministically.
+    """
     env = os.environ.copy()
     env.update(_as_env(action.get("env")))
     cwd = _as_cwd(action.get("cwd"))
@@ -261,9 +277,34 @@ def _execute_detached(argv: list[str], action: dict[str, Any]) -> dict[str, Any]
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        return {"status": "detached", "pid": process.pid}
     except Exception as err:
         return {"status": "failed", "error": str(err)}
+
+    _spawn_reaper(process.pid, wait_fn)
+    return {"status": "detached", "pid": process.pid}
+
+
+def _spawn_reaper(pid: int, wait_fn=None) -> threading.Thread | None:
+    """Bury ``pid`` on a daemon thread (R5 zombie reaping). wait_fn
+    defaults to os.waitpid; a failure (child already reaped, waitpid
+    unavailable) is swallowed — reaping must never surface as an error
+    to the executor or hold the agent process open."""
+    if wait_fn is None:
+        wait_fn = os.waitpid
+
+    def reap() -> None:
+        try:
+            wait_fn(pid, 0)  # block until THIS child exits
+        except ChildProcessError:
+            pass  # already reaped elsewhere (or double-spawned): fine
+        except Exception as err:  # noqa: BLE001 — reaping is best-effort
+            print(f"[AGENT] zombie reaper failed for pid {pid}: {err}")
+
+    thread = threading.Thread(
+        target=reap, name=f"streamdeck-reaper-{pid}", daemon=True
+    )
+    thread.start()
+    return thread
 
 
 # -------------------------

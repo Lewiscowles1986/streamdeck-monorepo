@@ -244,6 +244,10 @@ def update_config(config_id: str, config: StreamDeckConfig):
         saved_config.buttons = config.buttons
         saved_config.name = config.name
         saved_config.device_type = config.device_type
+        # R5 (P16): triggers round-trip through the whole-row PUT — a body
+        # without a triggers block clears it (replace semantics, matching
+        # how buttons/name/deviceType behave).
+        saved_config.triggers = config.triggers
         session.commit()
         session.refresh(saved_config)
         return saved_config

@@ -496,6 +496,72 @@ test.describe("demo-ui parity: toggle states", () => {
 });
 
 // ---------------------------------------------------------------
+// R5 (P16) — triggers UI: the ConfigEditor hosts an "Automatic Switching"
+// collapsible; filling it writes config.triggers and the wire form
+// survives save + reload. Demo mock replaces the whole config on update
+// (same semantics as the real PUT).
+// ---------------------------------------------------------------
+test.describe("demo-ui parity: automatic switching triggers", () => {
+  test("triggers editor writes app + ssid into the config JSON", async ({
+    page,
+  }) => {
+    await createConfigAndOpenButton1(page, `Triggers E2E ${Date.now()}`);
+
+    await page.getByTestId("triggers-toggle").click();
+    await expect(page.getByText(/switch to this layout when/i)).toBeVisible();
+    await page.getByTestId("triggers-apps").fill("Slack");
+    await page.getByTestId("triggers-ssid").fill("HomeWifi");
+
+    await page.getByRole("tab", { name: /json view/i }).click();
+    const pre = page.locator("pre");
+    await expect(pre).toContainText('"triggers"');
+    await expect(pre).toContainText('"app": [');
+    await expect(pre).toContainText('"Slack"');
+    await expect(pre).toContainText('"ssid": "HomeWifi"');
+  });
+
+  test("triggers survive save + reload (demo update replaces the row)", async ({
+    page,
+  }) => {
+    await createConfigAndOpenButton1(page, `Triggers Persist E2E ${Date.now()}`);
+
+    await page.getByTestId("triggers-toggle").click();
+    await page.getByTestId("triggers-apps").fill("Slack, Spotify");
+    await page.getByTestId("triggers-ssid").fill("HomeWifi");
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByTestId("triggers-toggle")).toBeVisible();
+    await page.getByTestId("triggers-toggle").click();
+    await expect(page.getByTestId("triggers-apps")).toHaveValue("Slack, Spotify");
+    await expect(page.getByTestId("triggers-ssid")).toHaveValue("HomeWifi");
+  });
+
+  test("clearing trigger fields removes the triggers block", async ({ page }) => {
+    await createConfigAndOpenButton1(page, `Triggers Clear E2E ${Date.now()}`);
+
+    await page.getByTestId("triggers-toggle").click();
+    await page.getByTestId("triggers-apps").fill("Slack");
+
+    await page.getByRole("tab", { name: /json view/i }).click();
+    await expect(page.locator("pre")).toContainText('"triggers"');
+
+    // Back to the visual editor, clear the field: the triggers key goes.
+    // NOTE: switching tabs remounts the collapsible CLOSED, so re-open it
+    // before touching the inputs.
+    await page.getByRole("tab", { name: /visual editor/i }).click();
+    await page.getByTestId("triggers-toggle").click();
+    await page.getByTestId("triggers-apps").fill("");
+    await page.getByRole("tab", { name: /json view/i }).click();
+    await expect(page.locator("pre")).not.toContainText('"triggers"');
+  });
+});
+
+// ---------------------------------------------------------------
 // Round 4 (P14/P15) — launch mode (attached/detached) and the
 // switch-config action as the ActionEditor hosts them.
 // ---------------------------------------------------------------

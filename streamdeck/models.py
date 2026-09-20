@@ -20,6 +20,13 @@ class StreamDeckConfig(SQLModel, table=True):
     name: str
     device_type: str = Field(alias="deviceType")
     buttons: dict[str, Any] = Field(sa_column=Column("buttons", JSON), default=[])
+    # R5 (P16): automatic-switching triggers, schema-less like buttons —
+    # {"app": ["Slack"], "network": {"ssid": "...", "interface": "en0"}}.
+    # No strict validation: the dialect stays flexible; the runner's
+    # evaluator treats malformed shapes as no-match.
+    triggers: dict[str, Any] | None = Field(
+        default=None, sa_column=Column("triggers", JSON, nullable=True)
+    )
 
 
 class StreamDeckDevice(SQLModel, table=True):

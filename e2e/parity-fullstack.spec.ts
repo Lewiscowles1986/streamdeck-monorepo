@@ -332,3 +332,53 @@ test.describe("full-stack parity: switch-config action", () => {
   });
 });
 
+// ---------------------------------------------------------------
+// Round 5 (P16) — triggers through the REAL API: the UI writes
+// config.triggers via the Automatic Switching editor, PUT /config/{id}
+// persists the JSON blob, and GET /config/{id} returns it structurally —
+// the same wire the runner's TriggerWatcher consumes.
+// ---------------------------------------------------------------
+test.describe("full-stack parity: automatic switching triggers", () => {
+  test("triggers round-trip through the real API (PUT + GET /config/{id})", async ({
+    page,
+    request,
+  }) => {
+    const configName = `Triggers API ${Date.now()}`;
+    await createConfigAndOpenButton1(page, configName);
+
+    await page.getByTestId("triggers-toggle").click();
+    await page.getByTestId("triggers-apps").fill("Slack");
+    await page.getByTestId("triggers-ssid").fill("HomeWifi");
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    // Structural round-trip through the real API: triggers survive as a
+    // schema-less JSON blob with the exact wire shape the evaluator reads.
+    const configId = page.url().split("/").filter(Boolean).pop();
+    expect(configId, "URL must end in the config id").toBeTruthy();
+    const response = await request.get(`http://localhost:8000/config/${configId}`);
+    expect(response.ok()).toBeTruthy();
+    const saved = await response.json();
+    expect(saved.triggers).toEqual({
+      app: ["Slack"],
+      network: { ssid: "HomeWifi" },
+    });
+
+    // And the whole-row PUT replace semantics: a body WITHOUT triggers
+    // clears the block (matching buttons/name/deviceType behavior).
+    const put = await request.put(`http://localhost:8000/config/${configId}`, {
+      data: {
+        name: saved.name,
+        deviceType: saved.deviceType,
+        buttons: saved.buttons,
+      },
+    });
+    expect(put.ok()).toBeTruthy();
+    const cleared = await put.json();
+    expect(cleared.triggers ?? null).toBeNull();
+  });
+});
+

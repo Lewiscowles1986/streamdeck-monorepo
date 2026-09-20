@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 
 import pytest
@@ -263,3 +264,98 @@ def test_env_reaches_the_subprocess():
     assert "SD_R4_TEETH=env-flows" in result["stdout"], (
         "the action env field must be merged into the subprocess env"
     )
+
+
+# ---------------------------------------------------------------
+# R5: detached-mode zombie reaping (round-4 deferral). A detached child
+# that exits while the agent stays up must be reaped (os.waitpid) by a
+# daemon thread — fire-and-forget for the CALLER, buried for the OS.
+# ---------------------------------------------------------------
+def test_detached_child_is_reaped_via_waitpid(monkeypatch):
+    """The executor schedules os.waitpid(pid, 0) for the detached child.
+    wait_fn is an injectable seam (defaults to os.waitpid); the test
+    injects a recorder and asserts the reaper called it with the child's
+    real pid."""
+    reaped: list[int] = []
+
+    def recording_wait(pid, flags):
+        reaped.append(pid)
+        return (pid, 0)
+
+    monkeypatch.setattr(agent.os, "waitpid", recording_wait)
+
+    result = agent.execute(
+        {
+            "type": "command",
+            "executable": "/usr/bin/true",
+            "mode": "detached",
+        }
+    )
+    assert result["status"] == "detached"
+    pid = result["pid"]
+
+    # The reaper thread runs concurrently; give it a moment.
+    deadline = time.monotonic() + 3.0
+    while pid not in reaped and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert pid in reaped, "detached child was never reaped (waitpid not called)"
+
+
+def test_detached_reaper_waits_for_child_exit(monkeypatch):
+    """The reaper must block on the child (waitpid semantics), i.e. reap
+    AFTER the child exits — with /bin/true that is immediate, but the
+    wait_fn must have been given the blocking (pid, 0) arguments."""
+    calls: list[tuple[int, int]] = []
+
+    def recording_wait(pid, flags):
+        calls.append((pid, flags))
+        return (pid, 0)
+
+    monkeypatch.setattr(agent.os, "waitpid", recording_wait)
+    result = agent.execute(
+        {"type": "command", "executable": "/usr/bin/true", "mode": "detached"}
+    )
+    pid = result["pid"]
+    deadline = time.monotonic() + 3.0
+    while not calls and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert calls, "reaper never invoked wait_fn"
+    assert calls[0] == (pid, 0), f"wait_fn called with {calls[0]}, want (pid, 0)"
+
+
+def test_detached_reaper_failure_never_breaks_execute(monkeypatch):
+    """If the reaper machinery itself fails (waitpid raising, e.g. the
+    child was already reaped elsewhere), execute() must still return the
+    clean detached result — reaping is best-effort."""
+
+    def exploding_wait(pid, flags):
+        raise ChildProcessError("no such child")
+
+    monkeypatch.setattr(agent.os, "waitpid", exploding_wait)
+    result = agent.execute(
+        {"type": "command", "executable": "/usr/bin/true", "mode": "detached"}
+    )
+    assert result["status"] == "detached", result
+    assert isinstance(result.get("pid"), int)
+
+
+def test_detached_reaper_is_a_daemon_thread(monkeypatch):
+    """The reaper must be a daemon thread (must not hold the agent process
+    open) and must be started per detached child."""
+    started: list[threading.Thread] = []
+    real_thread = threading.Thread
+
+    def spy_thread(*args, **kwargs):
+        t = real_thread(*args, **kwargs)
+        started.append(t)
+        return t
+
+    monkeypatch.setattr(agent.os, "waitpid", lambda pid, flags: (pid, 0))
+    monkeypatch.setattr(threading, "Thread", spy_thread)
+
+    result = agent.execute(
+        {"type": "command", "executable": "/usr/bin/true", "mode": "detached"}
+    )
+    assert result["status"] == "detached"
+    reapers = [t for t in started if t.daemon]
+    assert reapers, "no daemon reaper thread was started"

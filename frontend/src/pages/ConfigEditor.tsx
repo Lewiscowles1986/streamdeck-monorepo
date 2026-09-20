@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ButtonGrid } from "@/components/streamdeck/ButtonGrid";
 import { ButtonEditor } from "@/components/streamdeck/ButtonEditor";
+import { TriggersEditor } from "@/components/streamdeck/TriggersEditor";
 import { useToast } from "@/hooks/use-toast";
 import { configsApi } from "@/lib/api";
 import type { StreamDeckConfig, ButtonConfig } from "@/types/streamdeck";
@@ -52,6 +53,12 @@ export default function ConfigEditor() {
   const handleNameChange = (name: string) => {
     if (!config) return;
     setConfig({ ...config, name });
+    setHasChanges(true);
+  };
+
+  const handleTriggersChange = (triggers: StreamDeckConfig["triggers"]) => {
+    if (!config) return;
+    setConfig({ ...config, triggers });
     setHasChanges(true);
   };
 
@@ -158,7 +165,11 @@ export default function ConfigEditor() {
             </div>
 
             <TabsContent value="visual" className="mt-0 flex-1 overflow-auto p-6">
-              <div className="mx-auto max-w-4xl">
+              <div className="mx-auto max-w-4xl space-y-4">
+                <TriggersEditor
+                  triggers={config.triggers}
+                  onChange={handleTriggersChange}
+                />
                 <ButtonGrid
                   deviceType={config?.deviceType ?? config?.device_type}
                   buttons={config.buttons}

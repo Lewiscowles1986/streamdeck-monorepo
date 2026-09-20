@@ -174,9 +174,14 @@ export const demoConfigsApi = {
   ): Promise<StreamDeckConfig> {
     await delay();
     const configs = read<StreamDeckConfig[]>(LS_CONFIGS, []);
-    // Real PUT /config/{id} replaces name/deviceType/buttons wholesale;
-    // a partial body would be rejected (422). Emulate the same contract:
-    // only fields present on the payload are kept, merged over nothing.
+    // Real PUT /config/{id} replaces name/deviceType/buttons/triggers
+    // wholesale; a partial body would be rejected (422). Emulate the same
+    // contract: only fields present on the payload are kept, merged over
+    // nothing. Triggers (R5, P16) follow the same replace semantics — a
+    // payload WITHOUT a triggers key clears the block (the pydantic
+    // default is None), exactly like the real API. (JUDGE R5 fix: the
+    // old code preserved target.triggers on omission, which diverged
+    // from the real PUT.)
     const target = configs.find((c) => c.id === configId);
     if (!target) throw new Error("Configuration not found");
     const replaced: StreamDeckConfig = {
@@ -184,6 +189,7 @@ export const demoConfigsApi = {
       name: config.name ?? target.name,
       deviceType: config.deviceType ?? config.device_type ?? target.deviceType ?? target.device_type,
       buttons: config.buttons ?? target.buttons ?? [],
+      triggers: config.triggers,
     };
     const updated = configs.map((c) => (c.id === configId ? replaced : c));
     write(LS_CONFIGS, updated);

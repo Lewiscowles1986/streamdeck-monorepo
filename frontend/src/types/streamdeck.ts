@@ -109,6 +109,15 @@ export interface ButtonConfig {
   toggleStates?: ToggleState[];
 }
 
+// Automatic config-switching triggers (R5, P16): the device runner polls
+// the environment and (re)applies this config when a trigger matches.
+// Schema-less on the wire (the backend stores a JSON blob); these are the
+// fields the runner's evaluator understands.
+export interface ConfigTriggers {
+  app?: string[];
+  network?: { ssid?: string; interface?: string };
+}
+
 // Stream Deck configuration
 export interface StreamDeckConfig {
   id?: string;
@@ -116,6 +125,7 @@ export interface StreamDeckConfig {
   deviceType?: DeviceType;
   device_type?: DeviceType;
   buttons?: ButtonConfig[];
+  triggers?: ConfigTriggers;
 }
 
 // Device grid dimensions — keyed by BOTH kebab ids and the human names

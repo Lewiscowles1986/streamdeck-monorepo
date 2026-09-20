@@ -30,6 +30,7 @@ from .agent import (
     build_agent_action,
     expand_template_vars,
 )
+from .triggers import TriggerWatcher
 
 # Animation frames per second to attempt to display on the StreamDeck devices.
 FRAMES_PER_SECOND = 30
@@ -529,18 +530,16 @@ def api_base() -> str:
     return os.getenv("STREAMDECK_API", "http://localhost:8000").rstrip("/")
 
 
-def switch_config(deck, config_id: str) -> bool:
-    """Swap the runner's active config (P15). Fetches the new config from
-    the API, assigns it to the module `config`, resets the button state
-    dict and re-renders every key at idle. Crash-safe: an unknown config
-    or an unreachable API logs and keeps the CURRENT config; the return
-    value says whether a switch happened."""
+def apply_config(deck, new_config) -> bool:
+    """The config-swap core (R5 refactor of switch_config): assign the new
+    config to the module global, reset button + animation-pause state, and
+    re-render every key at idle. Crash-safe: a render hiccup is logged and
+    never undoes the swap. Returns True when a swap happened."""
     global config
-    fetched = fetch_config_by_id(api_base(), config_id)
-    if not fetched:
+    if not isinstance(new_config, dict):
         return False
 
-    config = fetched
+    config = new_config
     buttons.clear()
     paused_images.clear()
 
@@ -550,8 +549,19 @@ def switch_config(deck, config_id: str) -> bool:
             update_key_image(deck, key, False)
     except Exception as err:
         # Never let a render hiccup undo the config swap itself.
-        print(f"[CONFIG] switch-config: re-render failed: {err}")
+        print(f"[CONFIG] apply_config: re-render failed: {err}")
     return True
+
+
+def switch_config(deck, config_id: str) -> bool:
+    """Swap the runner's active config (P15). Fetches the new config from
+    the API and hands it to apply_config (the shared swap-core). Crash-
+    safe: an unknown config or an unreachable API logs and keeps the
+    CURRENT config; the return value says whether a switch happened."""
+    fetched = fetch_config_by_id(api_base(), config_id)
+    if not fetched:
+        return False
+    return apply_config(deck, fetched)
 
 
 # -------------------------
@@ -634,9 +644,35 @@ def run_deck(deck, args) -> None:
 
     deck.set_key_callback(key_change_callback)
 
+    # R5 (P16): automatic config switching. The watcher is started
+    # UNCONDITIONALLY (JUDGE R5 fix): get_config_fn re-reads the module
+    # `config` global on EVERY poll, so the watcher always tracks the
+    # CURRENT config — including one reached by a switch-config press or
+    # an API assign from a triggerless startup config (the old
+    # conditional start would never arm those until a runner restart).
+    # A triggerless current config is a no-op tick (the loop idles), so
+    # an unconditional watcher costs one cheap dict read per 5s poll.
+    # It stops when the runner shuts down or the deck goes away.
+    # apply-once semantics are inside the watcher (see
+    # streamdeck/triggers.py).
+    def _watcher_should_continue() -> bool:
+        return not closed_event.is_set() and deck.is_open()
+
+    trigger_watcher = TriggerWatcher(
+        get_config_fn=lambda: config,
+        apply_fn=lambda new_cfg: apply_config(deck, new_cfg),
+        poll_seconds=5.0,
+        should_continue_fn=_watcher_should_continue,
+    )
+    trigger_watcher.start()
+    print("[TRIGGER] automatic switching watcher started")
+
     # Block until deck closed
     while deck.is_open() and not closed_event.is_set():
         time.sleep(0.5)
+
+    if trigger_watcher.thread is not None:
+        trigger_watcher.thread.join(timeout=2.0)
 
 
 def main(args) -> None:

@@ -28,3 +28,28 @@ def init_db() -> None:
     from .models import StreamDeckConfig, StreamDeckDevice  # noqa: F401, PLC0415
 
     SQLModel.metadata.create_all(engine)
+    _migrate_triggers_column()
+
+
+def _migrate_triggers_column() -> None:
+    """R5 (P16): older dev databases predate the `triggers` column.
+    create_all only creates MISSING TABLES — a table that exists without
+    the column stays broken forever. SQLite supports ADD COLUMN, so add it
+    idempotently (checked via PRAGMA table_info)."""
+    from sqlalchemy import text
+
+    with engine.connect() as connection:
+        columns = [
+            row[1]
+            for row in connection.execute(
+                text("PRAGMA table_info(streamdeckconfig)")
+            )
+        ]
+        if "triggers" not in columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE streamdeckconfig "
+                    "ADD COLUMN triggers JSON NULL"
+                )
+            )
+            connection.commit()
