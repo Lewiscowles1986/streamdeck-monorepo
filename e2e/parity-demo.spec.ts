@@ -43,7 +43,7 @@ test.describe("demo-ui parity: agents surface", () => {
       .click();
     await page.getByRole("option", { name: /studio-mac\.local/i }).click();
     await page.getByRole("dialog").getByRole("button", { name: /^nominate$/i }).click();
-    await expect(page.getByText(/agent nominated/i)).toBeVisible();
+    await expect(page.getByText(/agent nominated/i).first()).toBeVisible();
     // The card now shows the nominated agent and a clear control.
     await expect(page.getByText("demo-agent-studio").first()).toBeVisible();
     await expect(page.getByRole("button", { name: /clear agent/i }).first()).toBeVisible();

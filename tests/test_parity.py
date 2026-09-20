@@ -699,8 +699,8 @@ def test_resume_continues_from_held_position(dummy_deck, monkeypatch):
     # "src" is a synthetic source string (no real file), so mock the render
     # pipeline: hand back the REAL shared cycle for "src" (so first paint
     # consumes f0 exactly like a real multi-frame decode would) and a
-    # static sentinel for any other source (the blank press-repaint must
-    # never touch the cycle). The cycle + pause machinery stays real.
+    # static sentinel for any other source (animation presses never
+    # re-render the source). The cycle + pause machinery stays real.
     monkeypatch.setattr(
         runner,
         "render_key_image",
@@ -723,10 +723,10 @@ def test_resume_continues_from_held_position(dummy_deck, monkeypatch):
     runner.key_change_callback(dummy_deck, 0, True)
     assert runner.paused_images["src"] is False
 
-    # Spy on writes only from here: the play press above triggers the
-    # pre-existing blank press-repaint (a pressed state with no image
-    # repaints BLANK — unchanged from the original port), which is not
-    # what this test is about. Only the resume tick's write is asserted.
+    # Spy on writes only from here: the play press repaints nothing (see
+    # test_animation_action_press_keeps_held_frame_visible) but
+    # is not what this test is about. Only the resume tick's write is
+    # asserted.
     writes: list[tuple[int, bytes]] = []
     monkeypatch.setattr(
         dummy_deck, "set_key_image", lambda k, f: writes.append((k, f))
@@ -813,3 +813,82 @@ def test_start_paused_config(dummy_deck, monkeypatch):
     # Paused after registration: an animate tick must hold the frame.
     runner.animate_tick(dummy_deck)
     assert len(writes) == 1
+
+
+def test_pause_is_shared_across_buttons(dummy_deck, monkeypatch):
+    """P13 shared-pause semantics: pause is keyed by the image SOURCE, so a
+    pause action on ONE button holds the frame for EVERY button showing
+    that source — a pressed pause on key 0 must leave key 1's animation
+    held too, and the shared cycle must not advance for either."""
+    _install_three_frame_source()
+    runner.config["buttons"].append({"index": 1, "idle": {"image": "src"}})
+    # Same documented workaround as the tests above: "src" is synthetic, so
+    # render is mocked to hand back the REAL shared cycle for "src" (first
+    # paints consume the cycle like a real decode would) and a static
+    # sentinel for any other source (the blank press-repaint must never
+    # touch the cycle).
+    monkeypatch.setattr(
+        runner,
+        "render_key_image",
+        lambda deck, source, *a, **k: runner.persistent_images["src"]
+        if source == "src"
+        else b"static-frame",
+    )
+    runner.update_key_image(dummy_deck, 0, False)
+    runner.update_key_image(dummy_deck, 1, False)
+    assert runner.persistent_image_buttons[0] == "src"
+    assert runner.persistent_image_buttons[1] == "src"
+
+    # Pause via key 0's action only — key 1 is never pressed.
+    runner.buttons[0] = {"state": 0, "action": "pause"}
+    runner.key_change_callback(dummy_deck, 0, True)
+    assert runner.paused_images["src"] is True
+
+    writes: list[tuple[int, bytes]] = []
+    monkeypatch.setattr(
+        dummy_deck, "set_key_image", lambda k, f: writes.append((k, f))
+    )
+    runner.animate_tick(dummy_deck)
+    assert writes == [], (
+        "a shared pause must hold EVERY button showing the source: neither "
+        "key 0 nor key 1 may be written while the source is paused"
+    )
+
+    # The cycle did not advance during the paused tick. Both first paints
+    # consumed frames (key 0 shows f0, key 1 shows f1 — one shared cycle,
+    # per P10), so the cycle sits at f2; a buggy tick that pulls-while-
+    # paused would have pushed it to f0.
+    assert next(runner.persistent_images["src"]) == b"f2"
+
+
+def test_animation_action_press_keeps_held_frame_visible(dummy_deck, monkeypatch):
+    """P13 press-repaint regression: pressing an animation control must not
+    blank the button. The pre-fix code repainted the key with BLANK_IMAGE
+    (these actions configure no pressed image), blanking the held frame the
+    feature exists to show — so the press must write NOTHING and leave the
+    frame already on the key (and the shared cycle) untouched."""
+    _install_three_frame_source()
+    monkeypatch.setattr(
+        runner,
+        "render_key_image",
+        lambda deck, source, *a, **k: runner.persistent_images["src"]
+        if source == "src"
+        else b"static-frame",
+    )
+    runner.update_key_image(dummy_deck, 0, False)  # register + first paint (f0)
+
+    writes: list[tuple[int, bytes]] = []
+    monkeypatch.setattr(
+        dummy_deck, "set_key_image", lambda k, f: writes.append((k, f))
+    )
+
+    runner.buttons[0] = {"state": 0, "action": "pause"}
+    runner.key_change_callback(dummy_deck, 0, True)
+    assert runner.paused_images["src"] is True
+
+    assert writes == [], (
+        "the pause press must not repaint the key at all: no BLANK_IMAGE "
+        "may land on the held frame"
+    )
+    # ...and the press must not consume the shared cycle (still at f1).
+    assert next(runner.persistent_images["src"]) == b"f1"

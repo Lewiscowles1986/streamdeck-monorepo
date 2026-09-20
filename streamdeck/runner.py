@@ -390,6 +390,14 @@ def key_change_callback(deck, key, state):
             animation_action = btn_action["type"]
     if animation_action:
         handle_animation_action(animation_action, key)
+        # P13: no press-repaint for animation controls. The normal repaint
+        # path would write BLANK_IMAGE here (these actions configure no
+        # pressed image), blanking the held frame the feature exists to
+        # show; and re-rendering the source instead would pull the shared
+        # cycle, silently advancing it behind the deck's back. The key
+        # already shows the correct frame — held while paused, and the
+        # animate loop continues it on the next tick when playing.
+        return
 
     if state and isinstance(btn_action, dict):
         dispatch_action(deck, key, btn_action)
