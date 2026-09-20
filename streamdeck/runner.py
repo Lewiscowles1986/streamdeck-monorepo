@@ -37,6 +37,10 @@ closed_event = threading.Event()
 buttons: dict[int, dict] = {}
 persistent_images: dict[str, Iterator | Image.Image] = {}
 persistent_image_buttons: dict[int, str] = {}
+# P13: pause state keyed by the full image source string (same key as
+# persistent_images), so pausing holds that GIF for EVERY button showing it.
+# Absent/False = playing; True = paused on the current frame.
+paused_images: dict[str, bool] = {}
 config: dict = {}
 
 
@@ -205,7 +209,12 @@ def get_button_config(key_index, state):
             toggle_states = btn.get("toggleStates", None)
             has_toggle = toggle_states and len(toggle_states) > 0
             if not has_toggle:
-                return btn.get("pressed", {}) if state else btn.get("idle", {})
+                state_cfg = btn.get("pressed", {}) if state else btn.get("idle", {})
+                # P13: the animation block is button-level (start paused /
+                # initial frame), so it applies whichever state is rendered.
+                if btn.get("animation"):
+                    state_cfg = {**state_cfg, "animation": btn["animation"]}
+                return state_cfg
             if has_toggle:
                 if state and old_state:
                     new_state = (old_state["state"] + 1) % len(toggle_states)
@@ -237,14 +246,84 @@ def update_key_image(deck, key, state):
 
     text = btn_cfg.get("text") or ""
     label_style = resolve_label_style(btn_cfg)
+
+    # Was this source already decoded before this call? A fresh decode is a
+    # FIRST paint for a new registration and must always write; a repaint of
+    # an already-registered animated source can be skipped while paused.
+    was_cached = btn_cfg["image"] in persistent_images
+
     image = render_key_image(deck, btn_cfg["image"], text, label_style)
     if btn_cfg["image"] in persistent_images:
         persistent_image_buttons[key] = btn_cfg["image"]
+        _apply_button_animation_config(btn_cfg, btn_cfg["image"])
+
+    if (
+        was_cached
+        and isinstance(image, Iterator)
+        and paused_images.get(btn_cfg["image"])
+    ):
+        # P13: this source is paused and the deck already shows the held
+        # frame — neither pull (which would advance the shared cycle) nor
+        # write. A paused deck keeps its frame across button presses.
+        return
 
     with deck:
         deck.set_key_image(
             key, next(image) if isinstance(image, Iterator) else image
         )
+
+
+def _apply_button_animation_config(btn_cfg: dict, source: str) -> None:
+    """Apply a button's optional ``animation`` config block at registration
+    time (P13). Two controls:
+
+    - ``paused``: mark the SOURCE as paused so the animate tick holds the
+      frame (pause is shared: every button showing this source holds).
+    - ``frameIndex``: advance the shared cycle exactly N times BEFORE the
+      first paint, best-effort (a static source has nothing to advance).
+    """
+    animation = btn_cfg.get("animation") or {}
+    if not isinstance(animation, dict):
+        return
+    frame_index = animation.get("frameIndex")
+    if frame_index:
+        cycle = persistent_images.get(source)
+        for _ in range(int(frame_index)):
+            try:
+                next(cycle)
+            except (StopIteration, TypeError):
+                break
+    if animation.get("paused"):
+        paused_images[source] = True
+
+
+def handle_animation_action(action_name: str, key: int) -> None:
+    """Resolve the image source currently shown by ``key`` and set its
+    pause flag (P13). ``pause``/``play``/``toggle-animation`` map to
+    True/False/flip. Sources with no entry count as playing."""
+    if action_name == "toggle-animation":
+        current = paused_images.get(_source_for_key(key), False)
+        _set_paused_for_key(key, not current)
+    elif action_name == "pause":
+        _set_paused_for_key(key, True)
+    elif action_name == "play":
+        _set_paused_for_key(key, False)
+
+
+def _source_for_key(key: int) -> str | None:
+    """The image source a button currently displays (its own registration
+    if present, else resolved from the config's idle/pressed image)."""
+    source = persistent_image_buttons.get(key)
+    if source is not None:
+        return source
+    btn_cfg = get_button_config(key, False)
+    return btn_cfg.get("image")
+
+
+def _set_paused_for_key(key: int, paused: bool) -> None:
+    source = _source_for_key(key)
+    if source is not None:
+        paused_images[source] = paused
 
 
 # -------------------------
@@ -296,6 +375,21 @@ def key_change_callback(deck, key, state):
         deck.reset()
         deck.close()
         return
+
+    # P13: animation controls. Both the bare-string form (like "exit") and
+    # the {"type": ...} dict form are accepted.
+    animation_action = None
+    if state:
+        if btn_action in ("pause", "play", "toggle-animation"):
+            animation_action = btn_action
+        elif isinstance(btn_action, dict) and btn_action.get("type") in (
+            "pause",
+            "play",
+            "toggle-animation",
+        ):
+            animation_action = btn_action["type"]
+    if animation_action:
+        handle_animation_action(animation_action, key)
 
     if state and isinstance(btn_action, dict):
         dispatch_action(deck, key, btn_action)
@@ -353,6 +447,27 @@ def fetch_assigned_config(api: str, device_id: str) -> dict | None:
 # -------------------------
 # Main Logic
 # -------------------------
+def animate_tick(deck) -> None:
+    """One pass of the 30fps animate loop (P13 refactor; behavior identical
+    to the former inline loop body). Pulls the next frame for every playing
+    source and writes it to every button registered to show it. A PAUSED
+    source is neither pulled nor written — the cycle retains its position,
+    so the held frame stays on deck and resume continues from it."""
+    img: dict[str, bytes] = {}
+    with deck:
+        for source, image in persistent_images.items():
+            if isinstance(image, Iterator) and paused_images.get(source):
+                continue
+            img[source] = next(image)
+        for key, source in persistent_image_buttons.items():
+            image = img.get(source)
+            if image:
+                deck.set_key_image(key, image)
+
+
+# -------------------------
+# Main Logic
+# -------------------------
 def run_deck(deck, args) -> None:
     """Open and drive a single deck until closed."""
     if not deck.is_open():
@@ -380,16 +495,9 @@ def run_deck(deck, args) -> None:
     def animate(fps):
         frame_time = Fraction(1, fps)
         next_frame = Fraction(time.monotonic())
-        img = {}
         while not closed_event.is_set() and deck.is_open():
             try:
-                with deck:
-                    for key, image in persistent_images.items():
-                        img[key] = next(image)
-                    for key, img_file in persistent_image_buttons.items():
-                        image = img.get(img_file)
-                        if image:
-                            deck.set_key_image(key, image)
+                animate_tick(deck)
             except TransportError as err:
                 print(f"TransportError: {err}")
                 break

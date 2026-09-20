@@ -19,6 +19,7 @@ def clean_runner_state():
     runner.buttons.clear()
     runner.persistent_images.clear()
     runner.persistent_image_buttons.clear()
+    runner.paused_images.clear()
     runner.closed_event.clear()
     yield
     runner.closed_event.clear()
@@ -632,3 +633,183 @@ def test_toggle_state_advances_on_press():
     assert [text for _, text, _ in seen] == ["S1", "S2", "S0"]
     # every state — including text-only overrides — keeps the idle image
     assert all(image == idle_image for _, _, image in seen)
+
+
+# ---------------------------------------------------------------
+# Round 3B (P13) — animation pause on a frame. Pause state is keyed
+# by the image SOURCE string (consistent with P10's shared cycle):
+# pausing pauses that GIF for every button showing it. The bare
+# strings "pause" / "play" / "toggle-animation" and the dict forms
+# {"type": ...} are equivalent; the animate tick must neither pull
+# nor write a paused source, and resume continues from the held
+# position (never resets to frame 0).
+# ---------------------------------------------------------------
+def _install_three_frame_source():
+    """Direct-construct a 3-frame shared source the way render_key_image
+    leaves it: one cycle in persistent_images, button 0 configured to show
+    it (idle image "src")."""
+    import itertools
+
+    runner.persistent_images["src"] = itertools.cycle([b"f0", b"f1", b"f2"])
+    runner.config = {
+        "device_type": "stream-deck-xl",
+        "buttons": [{"index": 0, "idle": {"image": "src"}}],
+    }
+
+
+def test_pause_action_holds_frame(dummy_deck, monkeypatch):
+    _install_three_frame_source()
+    # "src" is a synthetic source string (no real file), so mock the render
+    # pipeline: hand back the REAL shared cycle for "src" (so first paint
+    # consumes f0 exactly like a real multi-frame decode would) and a
+    # static sentinel for any other source (the blank press-repaint must
+    # never touch the cycle). The cycle + pause machinery stays real.
+    monkeypatch.setattr(
+        runner,
+        "render_key_image",
+        lambda deck, source, *a, **k: runner.persistent_images["src"]
+        if source == "src"
+        else b"static-frame",
+    )
+    runner.update_key_image(dummy_deck, 0, False)  # register + first paint
+    runner.buttons[0] = {"state": 0, "action": "pause"}
+
+    runner.key_change_callback(dummy_deck, 0, True)
+    assert runner.paused_images["src"] is True
+
+    writes: list[tuple[int, bytes]] = []
+    monkeypatch.setattr(
+        dummy_deck, "set_key_image", lambda k, f: writes.append((k, f))
+    )
+
+    runner.animate_tick(dummy_deck)
+    assert writes == [], "a paused source must be neither pulled nor written"
+
+    # The cycle must be untouched by paused ticks. After the first paint the
+    # cycle sits at f1; two paused ticks must consume nothing, so the next
+    # two pulls still yield f1 then f2 (a buggy tick would push them to f2/f0).
+    cyc = runner.persistent_images["src"]
+    assert next(cyc) == b"f1"
+    runner.animate_tick(dummy_deck)
+    assert next(cyc) == b"f2"
+
+
+def test_resume_continues_from_held_position(dummy_deck, monkeypatch):
+    _install_three_frame_source()
+    # "src" is a synthetic source string (no real file), so mock the render
+    # pipeline: hand back the REAL shared cycle for "src" (so first paint
+    # consumes f0 exactly like a real multi-frame decode would) and a
+    # static sentinel for any other source (the blank press-repaint must
+    # never touch the cycle). The cycle + pause machinery stays real.
+    monkeypatch.setattr(
+        runner,
+        "render_key_image",
+        lambda deck, source, *a, **k: runner.persistent_images["src"]
+        if source == "src"
+        else b"static-frame",
+    )
+    runner.update_key_image(dummy_deck, 0, False)  # register + first paint
+
+    # One playing tick displays f1; the cycle now sits at f2.
+    runner.animate_tick(dummy_deck)
+
+    runner.buttons[0] = {"state": 0, "action": "pause"}
+    runner.key_change_callback(dummy_deck, 0, True)
+    assert runner.paused_images["src"] is True
+
+    runner.animate_tick(dummy_deck)  # paused tick: holds position
+
+    runner.buttons[0]["action"] = "play"
+    runner.key_change_callback(dummy_deck, 0, True)
+    assert runner.paused_images["src"] is False
+
+    # Spy on writes only from here: the play press above triggers the
+    # pre-existing blank press-repaint (a pressed state with no image
+    # repaints BLANK — unchanged from the original port), which is not
+    # what this test is about. Only the resume tick's write is asserted.
+    writes: list[tuple[int, bytes]] = []
+    monkeypatch.setattr(
+        dummy_deck, "set_key_image", lambda k, f: writes.append((k, f))
+    )
+
+    runner.animate_tick(dummy_deck)
+    assert writes == [(0, b"f2")], (
+        "resume must continue from the held position (f2 next), not restart "
+        "the cycle at its first frame"
+    )
+
+
+def test_toggle_animation_action_contract(dummy_deck):
+    _install_three_frame_source()
+
+    # Bare-string form flips the flag on each press.
+    runner.buttons[0] = {"state": 0, "action": "toggle-animation"}
+    runner.key_change_callback(dummy_deck, 0, True)
+    assert runner.paused_images["src"] is True
+    runner.key_change_callback(dummy_deck, 0, True)
+    assert runner.paused_images["src"] is False
+
+    # Dict forms are equivalent: toggle, pause, play.
+    for dict_action, expected in (
+        ({"type": "toggle-animation"}, True),
+        ({"type": "pause"}, True),
+        ({"type": "play"}, False),
+    ):
+        runner.buttons[0]["action"] = dict_action
+        runner.key_change_callback(dummy_deck, 0, True)
+        assert runner.paused_images["src"] is expected, dict_action
+
+
+def test_start_paused_config(dummy_deck, monkeypatch):
+    """Button-level animation {paused, frameIndex}: registration pauses the
+    source and advances the shared cycle frameIndex times BEFORE the first
+    paint — frameIndex=2 paints frame index 2 (the 3rd frame). Paused
+    sources are then held: animate ticks neither pull nor write."""
+    import base64
+    import io
+    from pathlib import Path
+
+    from PIL import Image, ImageSequence
+
+    gif_bytes = (
+        Path(__file__).resolve().parents[1] / "e2e" / "assets" / "tri-color.gif"
+    ).read_bytes()
+    source = f"data:image/gif;base64,{base64.b64encode(gif_bytes).decode('ascii')}"
+
+    # Expected native frames, decoded exactly the way the runner decodes
+    # the data URI (same bytes → same frames → byte-identical conversion).
+    decoded = Image.open(io.BytesIO(gif_bytes))
+    expected = [
+        runner.convert_image(dummy_deck, frame)
+        for frame in ImageSequence.Iterator(decoded)
+    ]
+    assert len(expected) == 3, "tri-color.gif must decode to 3 frames"
+
+    runner.config = {
+        "device_type": "stream-deck-xl",
+        "buttons": [
+            {
+                "index": 0,
+                "idle": {"image": source},
+                "animation": {"paused": True, "frameIndex": 2},
+            },
+        ],
+    }
+
+    writes: list[tuple[int, bytes]] = []
+    monkeypatch.setattr(
+        dummy_deck, "set_key_image", lambda k, f: writes.append((k, f))
+    )
+
+    runner.update_key_image(dummy_deck, 0, state=False)
+
+    assert runner.persistent_image_buttons[0] == source
+    assert runner.paused_images[source] is True
+    assert writes, "first paint must happen at registration"
+    assert writes[0][1] == expected[2], (
+        "frameIndex=2 must advance the cycle twice before the first paint"
+    )
+
+    # Paused after registration: an animate tick must hold the frame.
+    runner.animate_tick(dummy_deck)
+    assert len(writes) == 1
