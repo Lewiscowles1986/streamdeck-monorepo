@@ -499,3 +499,136 @@ def test_animated_data_uri_is_shared_between_buttons(dummy_deck):
     from_button_2 = runner.render_key_image(dummy_deck, source)
     assert from_button_1 is from_button_2
     assert runner.persistent_images[source] is from_button_1
+
+
+# ---------------------------------------------------------------
+# Round 3A (assign→render loop): a config assigned to a device via
+# PUT /device/{id}/config/{config_id} is the exact dict the runner's
+# button state machine consumes, and update_key_image writes real
+# native key-image bytes onto the deck.
+# ---------------------------------------------------------------
+def test_assigned_config_drives_button_render(client, dummy_deck, monkeypatch):
+    from pathlib import Path
+
+    # A tiny local-file style image source (no data URI) — the same shape
+    # the UI stores for path-based images.
+    idle_image = str(
+        Path(__file__).resolve().parents[1] / "e2e" / "assets" / "red-blue.gif"
+    )
+
+    # 1. Create a config over the API: two labeled buttons, button 0 a
+    #    two-state toggle whose states carry no image override.
+    created = client.post(
+        "/config",
+        json={
+            "name": "Assigned Render",
+            "deviceType": "stream-deck-xl",
+            "buttons": [
+                {
+                    "index": 0,
+                    "idle": {"text": "A", "image": idle_image},
+                    "isToggle": True,
+                    "toggleStates": [
+                        {"name": "S0"},
+                        {"name": "S1", "text": "B-alt"},
+                    ],
+                },
+                {"index": 1, "idle": {"text": "B"}},
+            ],
+        },
+    ).json()
+
+    # 2. Assign it to the first device and read it back through the
+    #    runner-facing endpoint.
+    device = client.get("/devices").json()[0]
+    assert (
+        client.put(f"/device/{device['id']}/config/{created['id']}").status_code == 200
+    )
+    payload = client.get(f"/device/{device['id']}/config").json()
+    assert payload["config"]["id"] == created["id"]
+    assert payload["device"]["currentConfigId"] == created["id"]
+    assigned = payload["config"]
+    assert {b["index"]: b["idle"]["text"] for b in assigned["buttons"]} == {
+        0: "A",
+        1: "B",
+    }
+
+    # 3. Drive the runner with the assigned config exactly as run_deck would.
+    runner.config = assigned
+    runner.buttons.clear()
+
+    idle = runner.get_button_config(0, False)
+    assert idle["text"] == "A"  # state 0 has no overrides → inherits idle text
+    assert idle["image"] == idle_image  # ...and idle image
+
+    non_toggle = runner.get_button_config(1, False)
+    assert non_toggle["text"] == "B"
+
+    pressed = runner.get_button_config(0, True)
+    assert runner.buttons[0]["state"] == 1  # press advanced the toggle
+    assert pressed["text"] == "B-alt"  # state 1's text override wins...
+    assert pressed["image"] == idle_image  # ...but the idle image is inherited
+
+    # 4. One button renders to real native key-image bytes on the deck.
+    written: list[bytes] = []
+    real_set_key_image = dummy_deck.set_key_image
+
+    def spy_set_key_image(key, image):
+        written.append(image)
+        real_set_key_image(key, image)
+
+    monkeypatch.setattr(dummy_deck, "set_key_image", spy_set_key_image)
+    runner.update_key_image(dummy_deck, 0, state=False)
+
+    assert written, "update_key_image must write to the deck"
+    assert isinstance(written[0], bytes)
+    assert len(written[0]) > 0
+
+
+def test_toggle_state_advances_on_press():
+    """The 3-state toggle cycle: idle reads state 0, each press advances
+    S0→S1→S2 and wraps back to S0; a state with only a text override still
+    inherits the idle image (merge semantics)."""
+    import base64
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(buf, format="PNG")
+    idle_image = (
+        "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    )
+
+    runner.config = {
+        "name": "Cycle",
+        "buttons": [
+            {
+                "index": 0,
+                "idle": {"text": "idle", "image": idle_image},
+                "isToggle": True,
+                "toggleStates": [
+                    {"name": "S0", "text": "S0"},
+                    {"name": "S1", "text": "S1"},  # text override only, no image
+                    {"name": "S2", "text": "S2"},
+                ],
+            }
+        ],
+    }
+    runner.buttons.clear()
+
+    idle = runner.get_button_config(0, False)
+    assert idle["text"] == "S0"
+    assert idle["image"] == idle_image
+
+    seen: list[tuple[int, str, str]] = []
+    for _ in range(3):
+        cfg = runner.get_button_config(0, True)
+        seen.append(
+            (runner.buttons[0]["state"], cfg["text"], cfg["image"])
+        )
+
+    assert [state for state, _, _ in seen] == [1, 2, 0]  # advances, then wraps
+    assert [text for _, text, _ in seen] == ["S1", "S2", "S0"]
+    # every state — including text-only overrides — keeps the idle image
+    assert all(image == idle_image for _, _, image in seen)

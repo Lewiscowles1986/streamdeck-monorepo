@@ -168,3 +168,62 @@ test.describe("full-stack parity: command actions over the real API", () => {
   });
 });
 
+// ---------------------------------------------------------------
+// Round 3A — device config assignment over the real API: the config
+// the UI saved is assigned to a device via PUT /device/{id}/config/
+// {configId}, and the runner-facing GET /device/{id}/config returns
+// that config plus a device whose currentConfigId points at it.
+// ---------------------------------------------------------------
+test.describe("full-stack parity: device config assignment", () => {
+  test("device config assignment round-trips through the real API", async ({
+    page,
+  }) => {
+    const configName = `Assign API E2E ${Date.now()}`;
+    await createConfigAndOpenButton1(page, configName);
+
+    // Give the config one distinctive button so the round-trip check is
+    // not just about the name.
+    await page.getByPlaceholder("Button text").fill("HELLO");
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    // Structural round-trip — no compact-JSON string matching (round-2
+    // critic lesson): the API lives on :8000, page.request is scoped to :8081.
+    const configId = page.url().split("/").filter(Boolean).pop();
+    expect(configId, "URL must end in the config id").toBeTruthy();
+
+    const devicesResponse = await page.request.get("http://localhost:8000/devices");
+    expect(devicesResponse.ok()).toBeTruthy();
+    const devices = await devicesResponse.json();
+    const device = devices.find((d: { connected?: boolean }) => d.connected) ?? devices[0];
+    expect(device, "at least one device must exist").toBeTruthy();
+
+    const assignResponse = await page.request.put(
+      `http://localhost:8000/device/${device.id}/config/${configId}`
+    );
+    expect(assignResponse.ok()).toBeTruthy();
+
+    const assignedResponse = await page.request.get(
+      `http://localhost:8000/device/${device.id}/config`
+    );
+    expect(assignedResponse.ok()).toBeTruthy();
+    const assigned = await assignedResponse.json();
+
+    // Structural assertions: the assigned config is this config, and the
+    // device's currentConfigId points at it.
+    expect(assigned.config).toMatchObject({
+      id: configId,
+      name: configName,
+      buttons: expect.arrayContaining([
+        expect.objectContaining({ index: 0, idle: expect.objectContaining({ text: "HELLO" }) }),
+      ]),
+    });
+    expect(assigned.device).toMatchObject({
+      id: device.id,
+      currentConfigId: configId,
+    });
+  });
+});
+

@@ -351,3 +351,146 @@ test.describe("demo-ui parity: template variables + font config", () => {
     await expect(page.getByPlaceholder("Button text")).toHaveValue("PRESSED");
   });
 });
+
+// ---------------------------------------------------------------
+// Round 3A — toggle-mode editor parity: the Action tab's Toggle Mode
+// switch seeds two states; each state carries name/image/text/action
+// overrides that round-trip through save + reload; the grid cell
+// renders a ToggleLeft badge for toggle buttons; the remove control
+// is locked at the two-state minimum.
+// ---------------------------------------------------------------
+test.describe("demo-ui parity: toggle states", () => {
+  /** Open button 1's Action tab on a fresh config. */
+  async function openActionTab(page: Page, name: string) {
+    await createConfigAndOpenButton1(page, name);
+    await page.getByText("Action", { exact: true }).first().click();
+  }
+
+  /**
+   * Flip the Toggle Mode switch. NOTE: in headless Chromium the FIRST
+   * click after this Radix switch mounts is swallowed — the handler runs
+   * (onClick-start/end fire) but aria-checked stays false; every click
+   * after the first toggles normally (probe: 4 clicks → false,true,false,
+   * true; a real browser toggles on click 1). So click up to 3 times,
+   * checking between retries — blind repeated clicks would overshoot
+   * because clicks alternate the state.
+   */
+  async function flipToggleMode(page: Page) {
+    const sw = page.getByRole("switch");
+    for (let i = 0; i < 3; i++) {
+      await sw.click();
+      try {
+        await expect(page.getByText("Toggle States (2)")).toBeVisible({
+          timeout: 1500,
+        });
+        return;
+      } catch {
+        /* first click often no-ops in headless Chromium — retry */
+      }
+    }
+    await expect(page.getByText("Toggle States (2)")).toBeVisible();
+  }
+
+  test("toggle mode switch seeds two editable states", async ({ page }) => {
+    await openActionTab(page, `Toggle Seed E2E ${Date.now()}`);
+
+    await flipToggleMode(page);
+
+    await expect(page.getByText("Toggle States (2)")).toBeVisible();
+    await expect(page.getByRole("button", { name: /^State 1/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^State 2/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Add State/ })).toBeVisible();
+  });
+
+  test("toggle states carry per-state overrides through save + reload", async ({
+    page,
+  }) => {
+    await openActionTab(page, `Toggle Persist E2E ${Date.now()}`);
+    await flipToggleMode(page);
+    await expect(page.getByText("Toggle States (2)")).toBeVisible();
+
+    // State 1's trigger renders "State 1 (State 1)" — a prefix match;
+    // clicking it expands the accordion so its inputs mount.
+    await page.getByRole("button", { name: /^State 1/ }).click();
+    await page.getByPlaceholder("Image URL or path").fill("https://example.com/off.png");
+    await page.getByPlaceholder("Button text").last().fill("OFF");
+
+    // Expand state 2 and override its text.
+    await page.getByRole("button", { name: /^State 2/ }).click();
+    await page.getByPlaceholder("Button text").last().fill("ON");
+
+    // Add a third state, rename it, override its text.
+    await page.getByRole("button", { name: /Add State/ }).click();
+    await expect(page.getByText("Toggle States (3)")).toBeVisible();
+    await page.getByRole("button", { name: /^State 3/ }).click();
+    await page.getByPlaceholder("State name").last().fill("MUTE");
+    await page.getByPlaceholder("Button text").last().fill("MUTE");
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    await page.reload();
+    await page.locator(".streamdeck-button").first().click();
+    await page.getByText("Action", { exact: true }).first().click();
+
+    // The renamed third state persisted; expand each state and assert its
+    // override fields.
+    await expect(page.getByRole("button", { name: /^MUTE/ })).toBeVisible();
+    await page.getByRole("button", { name: /^State 1/ }).click();
+    await expect(page.getByPlaceholder("Button text").last()).toHaveValue("OFF");
+    await expect(page.getByPlaceholder("Image URL or path")).toHaveValue(
+      "https://example.com/off.png"
+    );
+    await page.getByRole("button", { name: /^State 2/ }).click();
+    await expect(page.getByPlaceholder("Button text").last()).toHaveValue("ON");
+    await page.getByRole("button", { name: /^MUTE/ }).click();
+    await expect(page.getByPlaceholder("Button text").last()).toHaveValue("MUTE");
+
+    // JSON View: the camelCase wire dialect the runner's get_button_config
+    // consumes (JSON.stringify(config, null, 2) — quoted keys with spaces).
+    await page.getByRole("tab", { name: /json view/i }).click();
+    const pre = page.locator("pre");
+    await expect(pre).toContainText('"toggleStates"');
+    await expect(pre).toContainText('"isToggle": true');
+    await expect(pre).toContainText('"OFF"');
+    await expect(pre).toContainText('"ON"');
+    await expect(pre).toContainText('"MUTE"');
+    await expect(pre).toContainText("https://example.com/off.png");
+  });
+
+  test("state count cannot drop below two", async ({ page }) => {
+    await openActionTab(page, `Toggle Min E2E ${Date.now()}`);
+    await flipToggleMode(page);
+    await expect(page.getByText("Toggle States (2)")).toBeVisible();
+
+    // Expand state 1 to reach its remove control: the ghost Trash2 icon
+    // button in the State Name row. At 2 states it must be disabled.
+    await page.getByRole("button", { name: /^State 1/ }).click();
+    const stateNameRow = page
+      .locator("div.flex.items-end.gap-2")
+      .filter({ has: page.getByPlaceholder("State name") })
+      .first();
+    await expect(stateNameRow.getByRole("button")).toBeDisabled();
+  });
+
+  test("toggle badge appears on the grid cell", async ({ page }) => {
+    await openActionTab(page, `Toggle Badge E2E ${Date.now()}`);
+    await flipToggleMode(page);
+    await expect(page.getByText("Toggle States (2)")).toBeVisible();
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Configuration saved successfully.").first()
+    ).toBeVisible();
+
+    await page.reload();
+    await page.locator(".streamdeck-button").first().click();
+
+    // Badge = the ToggleLeft lucide icon inside the cell's indicator row.
+    await expect(
+      page.locator(".streamdeck-button").first().locator("svg.lucide-toggle-left")
+    ).toBeVisible();
+  });
+});

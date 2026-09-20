@@ -5,7 +5,7 @@ contract; `tests/test_parity.py` is its executable form. If a parity test
 fails, the two surfaces have drifted — fix the code or update both sides
 deliberately (and this table) in the same change.
 
-Status: **2026-09-19** — all rows implemented and regression-tested.
+Status: **2026-09-20** — all rows implemented and regression-tested (toggle-mode editor + assign→render loop added 2026-09-20).
 
 ## Parity rules (each enforced by a test in `tests/test_parity.py`)
 
@@ -21,6 +21,8 @@ Status: **2026-09-19** — all rows implemented and regression-tested.
 | P8 | Action `timeout` is configurable in the UI and honored by the agent executor. | `test_command_action_timeout_env_dialect`, wire hop in `test_agent_roundtrip` (timeout/env survive queue→poll); E2E: parity-demo "timeout and env vars round-trip through save + reload", parity-fullstack "command action with template variables round-trips through the real API" |
 | P9 | All 8 vendored deck types render a grid in the UI, in both name dialects (kebab ids + human names like "Stream Deck XL"), with a safe fallback for unknown types. | `deviceDimensions()` + `deviceTypeLabel()` helpers; exercised by E2E |
 | P10 | Animated and static images the UI embeds as `data:` URIs (`FileReader.readAsDataURL`) are rendered by the runner through `render_key_image`, which decodes each animation frame once into an `itertools.cycle` cached in `persistent_images` keyed by the full source string — the same source on multiple buttons shares one decode and one cycle. The 30fps `animate` loop (`FRAMES_PER_SECOND`) pushes frames per button via `persistent_image_buttons`. | `test_animated_data_uri_from_frontend_pipeline_decodes_to_frames`, `test_animated_data_uri_is_shared_between_buttons`; E2E `parity-demo`/`parity-fullstack` GIF specs |
+| P11 | Toggle mode is configurable in the UI (Action tab Toggle Mode switch seeds "State 1"/"State 2", per-state name/image/text overrides, Add State, remove disabled at ≤2 states, `ToggleLeft` badge on the grid cell) and drives the runner: `get_button_config` cycles `(old + 1) % len(toggle_states)` per press and merges each state over the idle appearance. | `test_toggle_state_advances_on_press`, `test_assigned_config_drives_button_render`; E2E: parity-demo "toggle mode switch seeds two editable states", "toggle states carry per-state overrides through save + reload", "state count cannot drop below two", "toggle badge appears on the grid cell" |
+| P12 | A config assigned via `PUT /device/{id}/config/{config_id}` is exactly what the runner consumes: `GET /device/{id}/config` returns `{config, device}` with `device.currentConfigId` set, and `run_deck`/`fetch_assigned_config` load that config into the button state machine (`get_button_config`) and render it via `update_key_image`. | `test_assigned_config_drives_button_render`; E2E: parity-fullstack "device config assignment round-trips through the real API" |
 
 ## Backend-only surface, intentionally device/agent-facing (no UI by design)
 
