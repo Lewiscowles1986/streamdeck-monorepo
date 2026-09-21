@@ -52,6 +52,51 @@
 - Deeper automations (continued): chained toggle-state actions (a toggle state's action could itself be a sequence — supported by the agent already; needs UI affordance), step types beyond commands in the structured editor (switch-config, exit), sequence results surfaced in the UI (agent result polling display).
 - Sequence step templates: per-step `delayMs` exists; a sequence-level default delay is a possible follow-up.
 
+## Round 8 — Diátaxis documentation site: DONE (2026-09-20, builder round)
+
+- **docs/site/ built** — the whole solution documented in Diátaxis structure
+  (tutorials / how-to / reference / explanation), 18 pages + index:
+  - Tutorials: [zero-to-deck](../site/tutorials/zero-to-deck.md) (uvx install → serve → ui →
+    config in browser → assign → runner renders), [triggers](../site/tutorials/triggers.md)
+    (frontmost app + wifi end-to-end, incl. the priority rule and apply-once behavior).
+  - How-to (9): animated GIF upload, pause/resume animation, attached vs detached,
+    multi-step sequences, switch-config from a button, automatic-switching triggers,
+    nominate agents, completion (CLI + UI), run-the-test-suites — every guide with
+    numbered steps + verification; real Playwright snippets quoted/adapted from
+    `e2e/parity-demo.spec.ts` / `e2e/parity-fullstack.spec.ts` with source attribution.
+  - Reference: CLI (every command/flag from real `--help`), REST API (13 endpoints,
+    dialect rules incl. camelCase-vs-snake_case, schema-less JSON columns, whole-row PUT,
+    DELETE-returns-row), config schema (ButtonConfig, idle/pressed, font, toggleStates,
+    animation, all action types), triggers block, parity P1–P18 index.
+  - Explanation: architecture (+4 Mermaid diagrams: system map, queue→poll→result
+    lifecycle, trigger-watcher loop, action-execution flow), animation pipeline
+    (pipeline + pause state machine diagrams), template variables (expansion-points
+    diagram), crash-safety (catch-all layer diagram + one-status-list-or-many lesson),
+    testing philosophy (builder→critic→judge diagram), provenance rule.
+- **Accuracy grounding:** every CLI flag/endpoint/config key/default checked against
+  source (cli.py, app.py, agent.py, runner.py, triggers.py, models.py, types/streamdeck.ts,
+  ActionEditor/ToggleEditor/TriggersEditor/CommandInput/ImageUpload, demo-api.ts,
+  openapi.yaml, parity.md). CLI verified against live `--help` output for all 8 commands;
+  API spot-checked with curl against a scratch dummy-transport instance (GET /devices,
+  POST/GET /config, PUT /device/{id}/config/{id}, GET /device/{id}/config,
+  DELETE /config → 200-with-row, GET/POST /agents, POST /agent-actions → 202);
+  parity row count confirmed (exactly 18, P1–P18).
+- **Screenshots restored:** `docs/screenshots/` was EMPTY while docs/parity.md referenced
+  6 PNGs — captured all six (fullstack-dashboard, fullstack-agents, agents-empty-state,
+  agents-nominated, upload-gif-badge, action-editor-exit) with the local playwright-core +
+  cached chromium (no network installs), seeded via REST-only scripts against scratch
+  ports (all servers killed after). UI's localStorage API URL had to be set through the
+  Settings flow in the capture script (default :8000 ≠ scratch ports).
+- **Root README** gained a Documentation section linking docs/site/README.md.
+- **Loop status: COMPLETE** — 8 rounds, P1–P18 all implemented, parity-certified and
+  now documented. Remaining candidates (chained toggle-state action affordances,
+  sequence step types beyond commands in the structured editor, sequence results in
+  the UI, per-button pause, apply-once keyed by config id) live in the candidates list
+  above; nothing in P1–P18 is open.
+- Verification at time of writing: pytest **146 passed, 5 deselected**;
+  `bunx tsc --noEmit -p tsconfig.app.json` clean; docs link-check script green
+  (all relative links + image paths resolve).
+
 ## Rules of engagement
 
 - Commit message convention: `feat:`, `test:`, `docs:`, `fix:` prefixes (see git log).

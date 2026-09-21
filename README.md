@@ -26,6 +26,21 @@ uvx --from /path lets user use their streamdeck more using a single uvx command!
 See [PROVENANCE.md](PROVENANCE.md) for exact commits and licenses, and
 [docs/dev.md](docs/dev.md) for development workflows.
 
+## Documentation
+
+Full documentation lives in **[docs/site/](docs/site/README.md)**, organized
+by [Diátaxis](https://diataxis.fr/):
+
+| Section | For |
+| ------- | --- |
+| [Tutorials](docs/site/tutorials/index.md) | learning the stack end-to-end ([zero to a working deck](docs/site/tutorials/zero-to-deck.md), [triggers](docs/site/tutorials/triggers.md)) |
+| [How-to guides](docs/site/how-to/index.md) | getting a specific task done (GIF buttons, sequences, agents, tests…) |
+| [Reference](docs/site/reference/index.md) | looking things up ([CLI](docs/site/reference/cli.md), [REST API](docs/site/reference/api.md), [config schema](docs/site/reference/config-schema.md), [parity P1–P18](docs/site/reference/parity.md)) |
+| [Explanation](docs/site/explanation/index.md) | understanding the design (architecture, animation pipeline, crash-safety, testing philosophy, provenance) |
+
+Developer workflow docs: [docs/dev.md](docs/dev.md) · API contract:
+[docs/openapi.yaml](docs/openapi.yaml).
+
 ## Quick start
 
 ```sh
