@@ -8,7 +8,8 @@ streamdeck/core/       vendored python-elgato-streamdeck fork (see PROVENANCE.md
 frontend/              React/Vite/shadcn UI (demo mode included)
 tests/                 Python integration tests (no hardware; dummy transport)
 e2e/                   Playwright suites (demo-ui + full-stack)
-scripts/               build-frontend.sh, hardware-smoke.sh, install-hidapi.sh
+scripts/               build-frontend.sh, hardware-smoke.sh, install-hidapi.sh,
+                       hardware-tour.py (interactive real-deck eval TUI)
 ```
 
 ## Setup
