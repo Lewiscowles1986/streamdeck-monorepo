@@ -9,6 +9,19 @@ Everything else in this documentation runs hardware-free: the `dummy`
 transport emulates decks so tests and tutorials never touch USB. This guide
 is the one place where real hardware is the point.
 
+## Before you start — the working directory
+
+Every command in this guide runs from the **repository root** — the
+directory containing `.venv/` and `scripts/`. If your shell is somewhere
+else (e.g. the parent folder), `cd` there first:
+
+```sh
+cd streamdeck-monorepo    # adjust the path to where your clone lives
+```
+
+Each **new terminal** needs this again — the command blocks below repeat
+it so they can be pasted verbatim.
+
 ## Prerequisites
 
 - A Stream Deck (Original, Mini, XL, Plus, Pedal…) plugged in.
@@ -42,6 +55,7 @@ The script maps to the system package manager (`apt`, `dnf`, `pacman`,
 ## Step 2 — Enumerate the deck
 
 ```sh
+cd streamdeck-monorepo                                # if you're not already there
 .venv/bin/python -m streamdeck.cli list-devices
 ```
 
@@ -61,6 +75,7 @@ Found 1 Stream Deck(s)
 ## Step 3 — Run the smoke suite
 
 ```sh
+cd streamdeck-monorepo                                # if you're not already there
 STREAMDECK_TRANSPORT=libusb .venv/bin/python -m pytest -m hardware tests/test_hardware.py -v
 ```
 
@@ -81,9 +96,10 @@ itself when no deck is attached — it never breaks CI.
 ## Step 4 — Drive the deck live
 
 Three terminals ([tutorial 1](../tutorials/zero-to-deck.md) walks the same
-path with emulated decks):
+path with emulated decks) — `cd streamdeck-monorepo` in each one first:
 
 ```sh
+cd streamdeck-monorepo                                              # each terminal
 .venv/bin/python -m streamdeck.cli serve                            # API on :8000
 STREAMDECK_TRANSPORT=libusb .venv/bin/python -m streamdeck.cli run  # device runner
 .venv/bin/python -m streamdeck.cli ui --port 8081                   # web UI
@@ -103,6 +119,7 @@ operator cares about, driven by the deck's own keys. No API, no web UI, no
 config files; the terminal mirrors what happens:
 
 ```sh
+cd streamdeck-monorepo                                # if you're not already there
 STREAMDECK_TRANSPORT=libusb .venv/bin/python scripts/hardware-tour.py
 ```
 
