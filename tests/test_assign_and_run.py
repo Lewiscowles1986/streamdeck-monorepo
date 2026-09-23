@@ -1,6 +1,6 @@
-"""Regression tests for the assign-and-run fixes (2026-09-23 tour-via-cli
-session). Two bugs found while driving the real XL through the CLI with an
-API-assigned config:
+"""Regression tests for the assign-and-run fixes (2026-09-23, config-driven
+real-hardware tour). Two bugs found while driving the real XL through the
+CLI with an API-assigned config:
 
 1. Ordering: main() ran the device-type gate BEFORE any config was loaded
    (the module default {}), because run_deck only fetches the assigned

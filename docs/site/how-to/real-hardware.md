@@ -111,54 +111,41 @@ and paints all keys.
 
 ## Step 5 — The manual exploratory pass
 
-### Fast path: the guided tour (recommended)
-
-`scripts/hardware-tour.py` turns the deck itself into a self-guided
-evaluation surface — three built-in pages that exercise everything an
-operator cares about, driven by the deck's own keys. No API, no web UI, no
-config files; the terminal mirrors what happens:
+Everything below is driven by the stock CLI and config files — no custom
+code anywhere. Two terminals from Step 4 (drop the `ui` one if you're
+assigning via the API instead of the browser):
 
 ```sh
-cd streamdeck-monorepo                                # if you're not already there
-STREAMDECK_TRANSPORT=libusb .venv/bin/python scripts/hardware-tour.py
+cd streamdeck-monorepo                                              # each terminal
+.venv/bin/python -m streamdeck.cli serve                            # API on :8000
+STREAMDECK_TRANSPORT=libusb .venv/bin/python -m streamdeck.cli run  # device runner
 ```
 
-You should see the deck light up with page 1 and the terminal print:
+Then create three configs and wire them together — either in the web UI
+(Step 4's editor) or straight through REST with curl. The tour is just
+three configs wired with `switch-config`:
 
-```text
-Opened Stream Deck XL (CL42L2A02658, 32 keys) — brightness 50%
-[PAGE] 1/3 — Welcome
-
-Terminal controls: n/p page · 1-9 jump · b/B brightness · q quit
-Everything else happens ON THE DECK (arrows, exit, pause, toggle).
-```
-
-What to try, and what each proves:
-
-| Page | Press / observe | Expect on the physical deck |
+| Page | Config buttons (JSON) | What pressing them proves |
 | --- | --- | --- |
-| Welcome | the **Press me** key | repaints to "Pressed!" on press and back on release (press pipeline) |
-| Welcome | **Bright +/−** keys | deck brightness changes in 10% steps |
-| Animation | watch key 0 | a 30 fps animated counter (synthetic frames — no asset needed) |
-| Animation | the **Pause ⏸** key | frame counter HOLDS; **Play ▶** resumes from the same frame |
-| Toggle & jump | the **OFF/ON** key | label and color flip each press (toggle machine) |
-| Toggle & jump | the **Go p1** key | the whole deck repaints as page 1 (page switching) |
-| any page | **◀ Prev / Next ▶** arrows | move between the three pages on-deck |
-| any page | the **Exit ⏏** key | tour exits; deck is reset to blank |
+| **Welcome** | a labeled key + a `pressed` block | press pipeline: "Pressed!" shows while held |
+| **Welcome** | a `command` action (`mode: detached`) | detached commands fire without blocking the deck |
+| **Welcome** | `isToggle` + `toggleStates` | idle/pressed images flip each press |
+| **Animation** | a GIF data URI on one key | frames cycle at 30 fps |
+| **Animation** | `"action": "pause"` / `"play"` | the GIF HOLDS its frame; resume continues it |
+| **Animation** | `"action": "toggle-animation"` | one key flips hold/resume |
+| **Pages** | `"action": "switch-config:<id>"` × 2 | the whole deck repaints as the other page |
+| **any page** | `"action": "exit"` | the runner shuts down cleanly |
 
-Terminal fallback: `n`/`p` switch pages, `1`–`3` jump, `b`/`B` brightness,
-`q` quits.
+The exact JSON for each row is in the [config schema](../reference/config-schema.md)
+and the per-feature guides below. Two configs with `switch-config` buttons
+pointing at each other is the fastest way to see "pages" change on the
+hardware. Assign page 1 to your deck under **Devices** (or
+`PUT /device/{serial}/config/{id}`), and press through the table with the
+runner live — the terminal prints one `[EVENT]` line per press.
 
-This exercises the same feature set as the config-driven runner (labels,
-press states, animation + pause, toggles, switching) without building
-anything first. To evaluate those features with real configs, data-URI GIFs
-and the web editor, run the full stack instead (Step 4) and work through
-the checklist below.
+### Per-feature guides
 
-### Config-driven checklist
-
-With the runner live, work through this checklist. Each row links to the
-guide that builds that button:
+Each row of the table links to the guide that builds that button:
 
 | Press / observe | Expect on the physical deck | Guide |
 | --- | --- | --- |
@@ -172,13 +159,6 @@ guide that builds that button:
 Two configs with `switch-config` buttons pointing at each other is the
 fastest way to see "pages" change on the hardware.
 
-> The tour script and the config runner exercise the same machinery from
-> different sides: the tour is self-contained (synthetic pages, no API),
-> while the runner consumes UI-built configs. If a feature works in the
-> tour but misbehaves through a config, the difference is the config →
-> runner pipeline — check the JSON View tab in the editor against the
-> [config schema](../reference/config-schema.md).
-
 ## Troubleshooting
 
 - **`TransportError: Could not open HID device.`** — macOS HID opens are
@@ -189,9 +169,11 @@ fastest way to see "pages" change on the hardware.
   library is outside the searched paths. `brew install hidapi` puts it in
   Homebrew's `lib/`, which the vendored loader searches.
 - **Deck enumerates but keys stay dark** — no config is driving it. Assign
-  one in the UI, or pass a file directly: `streamdeck run --config my.json`
-  — or run the tour script (Step 5), which paints its own pages with no
-  config at all.
+  one in the UI, or pass a file directly: `streamdeck run --config my.json`.
+- **Deck looks alive but presses do nothing** — the runner already exited;
+  hardware RETAINS the last painted frame, so a frozen panel proves nothing.
+  Check the runner process is running (its terminal prints one `[EVENT]`
+  line per press), then re-run `streamdeck run`.
 
 ## Verify
 
