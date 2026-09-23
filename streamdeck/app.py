@@ -164,6 +164,24 @@ def assign_config_to_device(device_id: str, config_id: str):
         return device
 
 
+# -----------------------------
+# Runner dialect boundary
+# -----------------------------
+def to_runner_format(config_json: dict) -> dict:
+    """Translate an API-dialect config dict (aliased camelCase, as served by
+    every endpoint) into the RUNNER's internal format (snake_case). The API
+    storage format must not dictate the CLI runner format: the runner core
+    reads exactly one shape — device_type — and this boundary is the only
+    place the wire dialect is translated. Unknown keys pass through so the
+    runner's own parsers keep seeing everything the config carries."""
+    if not isinstance(config_json, dict):
+        return config_json
+    out = dict(config_json)
+    if "deviceType" in out:
+        out["device_type"] = out.pop("deviceType")
+    return out
+
+
 @app.get("/device/{device_id}/config", tags=["Devices"])
 def get_assigned_config(device_id: str):
     """The config currently assigned to a device (used by the device runner)."""
@@ -182,7 +200,9 @@ def get_assigned_config(device_id: str):
         if not config:
             return {"config": None, "device": device_json}
         return {
-            "config": json.loads(config.model_dump_json(by_alias=True)),
+            "config": to_runner_format(
+                json.loads(config.model_dump_json(by_alias=True))
+            ),
             "device": device_json,
         }
 

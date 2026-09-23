@@ -702,6 +702,17 @@ def main(args) -> None:
             print(f"Error loading config file: {e}")
             return
 
+    # The device-type gate below needs the ACTIVE config. With no --config
+    # file, that is the API-assigned one — fetch it NOW, before the gate.
+    # (run_deck also fetches, but only after this gate would have skipped
+    # the deck: the gate previously compared against the empty module
+    # config and rejected every deck on the assign-and-run path.)
+    if not args.config and not config:
+        assigned_probe = fetch_assigned_config(args.api, args.device_id or "")
+        if assigned_probe:
+            config = assigned_probe
+            print(f"[API] Using assigned config '{config.get('name')}'")
+
     for deck in streamdecks:
         deck.open()
 
@@ -710,14 +721,18 @@ def main(args) -> None:
             deck.close()
             continue
 
-        if all(
-            [
-                deck.deck_type().lower() != str(config.get("device_type", "")).lower(),
-                deck.deck_type().lower().replace(" ", "-")
-                != str(config.get("device_type", "")).lower().replace(" ", "-"),
-                args.ignore_device_type_check is False,
-            ]
-        ):
+        config_device_type = str(config.get("device_type", "") or "")
+        # An empty device_type in the config means "no device-type pin":
+        # when no type is declared, run any attached deck instead of
+        # skipping everything (an empty match-everything gate would make
+        # the assign-and-run workflow impossible).
+        type_matches = (
+            not config_device_type
+            or deck.deck_type().lower() == config_device_type.lower()
+            or deck.deck_type().lower().replace(" ", "-")
+            == config_device_type.lower().replace(" ", "-")
+        )
+        if not type_matches and args.ignore_device_type_check is False:
             print(f"Skipping deck ({deck.deck_type()}) - does not match config device_type")
             deck.close()
             continue
