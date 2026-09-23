@@ -140,6 +140,22 @@ export interface ConfigTriggers {
   network?: { ssid?: string; interface?: string };
 }
 
+/**
+ * Multi-button background span (P19): one image painted across a region of
+ * key cells. `x`/`y` are the top-left key cell (0-based, col/row) and
+ * `width`/`height` are in cells. The device runner composites the image
+ * over the region and paints the covered keys that have no image of their
+ * own — a button's own idle/pressed image always wins.
+ */
+export interface BackgroundSpan {
+  id: string;
+  image: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 // Stream Deck configuration
 export interface StreamDeckConfig {
   id?: string;
@@ -148,6 +164,8 @@ export interface StreamDeckConfig {
   device_type?: DeviceType;
   buttons?: ButtonConfig[];
   triggers?: ConfigTriggers;
+  /** P19: image spans painted across multiple key cells. */
+  backgrounds?: BackgroundSpan[] | null;
 }
 
 // Device grid dimensions — keyed by BOTH kebab ids and the human names

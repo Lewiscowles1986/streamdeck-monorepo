@@ -135,6 +135,7 @@ three configs wired with `switch-config`:
 | **Animation** | `"action": "toggle-animation"` | one key flips hold/resume |
 | **Pages** | `"action": "switch-config:<id>"` × 2 | the whole deck repaints as the other page |
 | **any page** | `"action": "exit"` | the runner shuts down cleanly |
+| **any page** | a `backgrounds` span in the config | one image paints across multiple keys seamlessly ([compose image backgrounds](image-backgrounds.md)) |
 
 The exact JSON for each row is in the [config schema](../reference/config-schema.md)
 and the per-feature guides below. Two configs with `switch-config` buttons

@@ -268,6 +268,28 @@ components:
           type: array
           description: "JSON blob; list of per-button objects"
           items: { $ref: "#/components/schemas/ButtonConfig" }
+        triggers:
+          type: object
+          nullable: true
+          description: "Schema-less automatic-switching triggers blob (P16); whole-row PUT replace semantics — omitted clears the block"
+        backgrounds:
+          type: array
+          nullable: true
+          description: "Multi-button image spans (P19); whole-row PUT replace semantics — omitted clears the block"
+          items: { $ref: "#/components/schemas/BackgroundSpan" }
+
+    BackgroundSpan:
+      type: object
+      description: "One image painted across a region of key cells (P19). The runner composites it over the region and paints covered keys with no image of their own; later entries composite over earlier ones."
+      properties:
+        id: { type: string, description: "Stable id; defaults to bg<index> when omitted" }
+        image:
+          type: string
+          description: "Data URI, http(s) URL, or local path — animated GIFs animate"
+        x: { type: integer, minimum: 0, description: "Top-left key cell column (0-based)" }
+        y: { type: integer, minimum: 0, description: "Top-left key cell row (0-based)" }
+        width: { type: integer, minimum: 1, description: "Span width in cells" }
+        height: { type: integer, minimum: 1, description: "Span height in cells" }
 
     ButtonConfig:
       type: object

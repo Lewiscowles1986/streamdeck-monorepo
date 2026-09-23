@@ -97,6 +97,71 @@
   `bunx tsc --noEmit -p tsconfig.app.json` clean; docs link-check script green
   (all relative links + image paths resolve).
 
+## Round 9 — multi-button image backgrounds (P19): DONE (2026-09-23, builder round)
+
+- **Config surface — DONE.** `StreamDeckConfig.backgrounds`: schema-less JSON
+  column like `buttons`/`triggers` — `[{"id": "hero", "image": <source>,
+  "x": 0, "y": 0, "width": 4, "height": 2}]` (region in key cells, x/y =
+  top-left). Same whole-row PUT replace semantics as `triggers` (omitted key
+  clears the block); idempotent `PRAGMA`-checked `ALTER TABLE` migration
+  generalized to `_migrate_json_columns` (triggers + backgrounds) for legacy
+  DBs. API round-trip pinned by `test_backgrounds_roundtrip_through_real_api`.
+- **Runner rendering — DONE.** `streamdeck/runner.py`: `_normalized_backgrounds`
+  (malformed entries dropped: non-dict, no image, non-numeric/negative region,
+  zero-sized; string numerics coerced), `_covering_background` (region test in
+  deck-layout coordinates; z-order = last covering entry wins),
+  `_background_frames` (decoded PIL frames cached per bg id), and
+  `_background_composite` — ONE full-deck canvas per frame, image scaled to
+  COVER the region (aspect preserved, center-cropped), then
+  `_tile_for_key` slices each key's tile and pre-applies the INVERSE of the
+  deck's per-key transform (`key_image_format` flip/rotation) so the vendored
+  `_to_native_format` conversion restores display orientation — spans stay
+  seamless on Original/XL/Mini/Neo, the flip/rotate decks. Each tile registers
+  under the synthetic source `background:<id>#<key>` in `persistent_images`
+  (animated → `itertools.cycle`, static → plain bytes, so the tick neither
+  pulls nor rewrites stills), riding the EXISTING animate loop and repaint
+  paths. `update_key_image` consults backgrounds only when the button has no
+  image of its own (own-image-wins); text-only covered keys draw their label
+  over the tile. P13 pause extended: pause on any covered key sets EVERY tile
+  source of that background (per-key pause would tear the span);
+  button-image pause untouched. `apply_config` purges tile cycles + frame +
+  composite caches on every config swap.
+- **UI — DONE.** New **Backgrounds** page (`frontend/src/pages/Backgrounds.tsx`,
+  sidebar item + `/config/:id/backgrounds` route + ConfigEditor header link):
+  config picker, per-span card (ImageUpload + x/y/width/height), add/remove,
+  live per-cell preview using the SAME crop math as the runner
+  (`backgroundTileStyle` in ButtonGrid, mirrored on the page). The
+  ConfigEditor grid shows span tiles behind imageless cells (last covering
+  span wins, mirroring runner z-order). Demo-api `update()` replace semantics
+  extended to `backgrounds`.
+- **Tests — DONE.** `tests/test_backgrounds.py` (19, mutation-verified:
+  paint-hook disabled → 8 fail, restored clean): normalization matrix,
+  coverage/z-order, tile bytes on covered keys, own-image-wins (animated
+  source so registration is observable), text-over-tile, one-composite
+  slicing, inverse-transform round-trip (pixel-exact), animated cycle + tick
+  advance, static-as-bytes, shared pause across the span + isolation from
+  button-image pause, corrupt-image defense, indexed-id fallback, apply_config
+  purge + repaint, press-repaint keeps tile. E2E: parity-demo +4 (sidebar
+  link, upload+coverage preview, save+reload+JSON round-trip, empty-span
+  skip, remove — 34 total) and parity-fullstack +2 (span round-trips through
+  the real API with region + data URI verbatim; PUT-without-key clears — 16
+  total). LESSON: the Backgrounds page URL is `/config/{id}/backgrounds` —
+  the config id is the SECOND-to-last URL segment; a `.pop()` id extraction
+  grabs the word "backgrounds" and 404s. Also: a stale server on :8000
+  (Playwright `reuseExistingServer`) served pre-P19 code — `backgrounds`
+  missing from GET responses was a server-restart issue, not a code bug.
+- **Docs — DONE.** Parity rule **P19** in `docs/parity.md` (19 rows verified)
+  + summarized row in `docs/site/reference/parity.md` (P1–P19);
+  `backgrounds` in the config-schema reference (new section with runner
+  semantics) + openapi.yaml (`BackgroundSpan` schema + Config property);
+  new how-to [compose multi-button image backgrounds](docs/site/how-to/image-backgrounds.md)
+  (indexed in how-to/index.md + site README, cross-linked from
+  animated-gif-button + real-hardware's manual-pass table); link check green
+  on all touched docs.
+- Final counts: pytest **177 passed, 5 deselected**; demo pair **34** /
+  demo-ui **5** / fullstack pair **16** / full-stack **3**; `bunx tsc
+  --noEmit -p tsconfig.app.json` clean.
+
 ## Rules of engagement
 
 - Commit message convention: `feat:`, `test:`, `docs:`, `fix:` prefixes (see git log).

@@ -28,14 +28,15 @@ def init_db() -> None:
     from .models import StreamDeckConfig, StreamDeckDevice  # noqa: F401, PLC0415
 
     SQLModel.metadata.create_all(engine)
-    _migrate_triggers_column()
+    _migrate_json_columns()
 
 
-def _migrate_triggers_column() -> None:
-    """R5 (P16): older dev databases predate the `triggers` column.
-    create_all only creates MISSING TABLES — a table that exists without
-    the column stays broken forever. SQLite supports ADD COLUMN, so add it
-    idempotently (checked via PRAGMA table_info)."""
+def _migrate_json_columns():
+    """Older dev databases predate columns added after the initial port
+    (`triggers` in R5, `backgrounds` in P19). create_all only creates
+    MISSING TABLES — a table that exists without the column stays broken
+    forever. SQLite supports ADD COLUMN, so add each one idempotently
+    (checked via PRAGMA table_info)."""
     from sqlalchemy import text
 
     with engine.connect() as connection:
@@ -45,11 +46,12 @@ def _migrate_triggers_column() -> None:
                 text("PRAGMA table_info(streamdeckconfig)")
             )
         ]
-        if "triggers" not in columns:
-            connection.execute(
-                text(
-                    "ALTER TABLE streamdeckconfig "
-                    "ADD COLUMN triggers JSON NULL"
+        for column in ("triggers", "backgrounds"):
+            if column not in columns:
+                connection.execute(
+                    text(
+                        f"ALTER TABLE streamdeckconfig "
+                        f"ADD COLUMN {column} JSON NULL"
+                    )
                 )
-            )
-            connection.commit()
+        connection.commit()

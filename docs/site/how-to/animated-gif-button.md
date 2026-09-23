@@ -3,6 +3,10 @@
 **Goal:** put an animated GIF on a Stream Deck key — from the browser upload
 through to frames cycling on the deck at 30 fps.
 
+> One image across SEVERAL keys at once is a different feature — see
+> [compose multi-button image backgrounds](image-backgrounds.md); the same
+> upload pipeline feeds the config's `backgrounds` block.
+
 ## How it works (one paragraph)
 
 The UI reads the file with `FileReader.readAsDataURL` and stores it as a

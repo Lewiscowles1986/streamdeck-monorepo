@@ -877,3 +877,133 @@ test.describe("demo-ui parity: sequence actions", () => {
     await expect(page.getByTestId("sequence-step-1")).toHaveCount(0);
   });
 });
+
+// ---------------------------------------------------------------
+// P19 — multi-button image backgrounds. The Backgrounds page is the
+// coordination surface: pick a config, upload a span image, place it
+// (x/y/width/height in cells), and see the per-cell crop preview the
+// runner paints. Save writes config.backgrounds through the normal
+// whole-row PUT.
+// ---------------------------------------------------------------
+const SPAN_PNG = path.resolve(__dirname, "assets", "red-blue.gif");
+
+async function openBackgroundsPage(page: Page, configName: string) {
+  await page.goto("/");
+  await page.waitForLoadState("networkidle");
+  await page.getByRole("link", { name: /configurations/i }).click();
+  await page.getByRole("button", { name: /new config/i }).click();
+  await page.getByPlaceholder(/my gaming layout/i).fill(configName);
+  await page.getByRole("button", { name: /^create$/i }).click();
+  await expect(page.getByText(/visual editor/i).first()).toBeVisible();
+  // The editor header links straight to the coordination page.
+  await page.getByTestId("open-backgrounds").click();
+  await expect(page.getByText(/painted across multiple buttons/i).first()).toBeVisible();
+  return configName;
+}
+
+test.describe("demo-ui parity: multi-button backgrounds (P19)", () => {
+  test("sidebar links to the backgrounds page", async ({ page }) => {
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("link", { name: /backgrounds/i }).click();
+    await expect(
+      page.getByText(/painted across multiple buttons/i).first()
+    ).toBeVisible();
+  });
+
+  test("add a span, upload an image, and see the covered cells show its tiles", async ({
+    page,
+  }) => {
+    await openBackgroundsPage(page, `Backgrounds E2E ${Date.now()}`);
+
+    // Pick the freshly created config in the coordination page's picker.
+    await page.getByTestId("backgrounds-config-picker").click();
+    await page.getByRole("option", { name: /Backgrounds E2E/ }).click();
+    await page.getByTestId("add-background").click();
+
+    // Upload the span image into the new editor card.
+    await page.locator('input[type="file"]').setInputFiles(SPAN_PNG);
+    await expect(page.getByAltText("Button preview")).toBeVisible();
+
+    // Widen the span to 2 cells so a neighboring cell joins the coverage.
+    const firstCard = page.locator("[data-testid^='background-editor-']").first();
+    await firstCard.getByTestId(/^background-width-/).fill("2");
+
+    // The preview grid shows the per-cell tiles on covered cells.
+    await expect(page.getByTestId("covered-cell-0")).toBeVisible();
+    await expect(page.getByTestId("covered-cell-1")).toBeVisible();
+
+    // Each covered cell carries the CSS-tile style (the editor mirror of
+    // the runner's composite-then-slice).
+    const tile0 = page
+      .getByTestId("covered-cell-0")
+      .locator("[aria-hidden]");
+    await expect(tile0).toHaveCSS("background-image", /url\("data:image/);
+  });
+
+  test("backgrounds survive save + reload and round-trip through JSON View", async ({
+    page,
+  }) => {
+    await openBackgroundsPage(page, `Backgrounds Reload E2E ${Date.now()}`);
+
+    await page.getByTestId("backgrounds-config-picker").click();
+    await page.getByRole("option", { name: /Backgrounds Reload E2E/ }).click();
+    await page.getByTestId("add-background").click();
+    await page.locator('input[type="file"]').setInputFiles(SPAN_PNG);
+    await expect(page.getByAltText("Button preview")).toBeVisible();
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Backgrounds saved successfully.").first()
+    ).toBeVisible();
+
+    await page.reload();
+    await page.getByTestId("backgrounds-config-picker").click();
+    await page.getByRole("option", { name: /Backgrounds Reload E2E/ }).click();
+    await page.getByTestId("add-background").click();
+
+    await expect(page.getByTestId("covered-cell-0")).toBeVisible();
+
+    // JSON View in the ConfigEditor proves the wire format the runner reads.
+    await page.goto("/");
+    await page.getByRole("link", { name: /configurations/i }).click();
+    await page
+      .locator(".group", { hasText: /Backgrounds Reload E2E/ })
+      .first()
+      .getByRole("button", { name: /edit/i })
+      .click();
+    await page.getByRole("tab", { name: /json view/i }).click();
+    const pre = page.locator("pre");
+    await expect(pre).toContainText('"backgrounds"');
+    await expect(pre).toContainText('"width": 2');
+    await expect(pre).toContainText('"image": "data:image/gif;base64,');
+  });
+
+  test("a span with no image yet is skipped in the preview", async ({ page }) => {
+    await openBackgroundsPage(page, `Backgrounds Empty E2E ${Date.now()}`);
+
+    await page.getByTestId("backgrounds-config-picker").click();
+    await page.getByRole("option", { name: /Backgrounds Empty E2E/ }).click();
+    await page.getByTestId("add-background").click();
+
+    // No image uploaded: the span exists but covers no cells.
+    await expect(page.getByTestId("covered-cell-0")).toHaveCount(0);
+
+    // Uploading flips the coverage on.
+    await page.locator('input[type="file"]').setInputFiles(SPAN_PNG);
+    await expect(page.getByTestId("covered-cell-0")).toBeVisible();
+  });
+
+  test("backgrounds can be removed", async ({ page }) => {
+    await openBackgroundsPage(page, `Backgrounds Remove E2E ${Date.now()}`);
+
+    await page.getByTestId("backgrounds-config-picker").click();
+    await page.getByRole("option", { name: /Backgrounds Remove E2E/ }).click();
+    await page.getByTestId("add-background").click();
+    await page.locator('input[type="file"]').setInputFiles(SPAN_PNG);
+    await expect(page.getByTestId("covered-cell-0")).toBeVisible();
+
+    await page.getByRole("button", { name: /remove background/i }).click();
+    await expect(page.getByTestId("covered-cell-0")).toHaveCount(0);
+  });
+});

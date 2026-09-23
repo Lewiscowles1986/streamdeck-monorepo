@@ -27,6 +27,14 @@ class StreamDeckConfig(SQLModel, table=True):
     triggers: dict[str, Any] | None = Field(
         default=None, sa_column=Column("triggers", JSON, nullable=True)
     )
+    # P19: multi-button image backgrounds, schema-less like buttons —
+    # [{"id": "hero", "image": "data:image/png;base64,...", "x": 0,
+    #   "y": 0, "width": 4, "height": 2}]. The runner composites each
+    # image over its key-cell region and paints the covered keys that
+    # have no image of their own; malformed entries are skipped.
+    backgrounds: dict[str, Any] | None = Field(
+        default=None, sa_column=Column("backgrounds", JSON, nullable=True)
+    )
 
 
 class StreamDeckDevice(SQLModel, table=True):

@@ -10,6 +10,9 @@ the [tutorials](../tutorials/index.md) instead.
   a key (data URI pipeline, GIF badge, shared decode).
 - **[Pause and resume an animation](pause-animation.md)** — hold a frame with
   `pause`/`play`/`toggle-animation` actions and the `animation` config block.
+- **[Compose multi-button image backgrounds](image-backgrounds.md)** — one
+  image spanning several keys: the Backgrounds page, cover-scaling, z-order,
+  and the button-image-wins rule.
 
 ## Running commands
 

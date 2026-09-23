@@ -1,4 +1,4 @@
-import { Monitor, LayoutGrid, Settings, Wifi, WifiOff, Laptop } from "lucide-react";
+import { Monitor, LayoutGrid, Settings, Wifi, WifiOff, Laptop, Layers } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useApi } from "@/contexts/ApiContext";
 import {
@@ -17,6 +17,7 @@ import {
 const navItems = [
   { title: "Devices", url: "/", icon: Monitor },
   { title: "Configurations", url: "/configs", icon: LayoutGrid },
+  { title: "Backgrounds", url: "/backgrounds", icon: Layers },
   { title: "Agents", url: "/agents", icon: Laptop },
   { title: "Settings", url: "/settings", icon: Settings },
 ];

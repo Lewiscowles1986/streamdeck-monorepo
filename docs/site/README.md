@@ -48,6 +48,7 @@ Each guide solves one concrete problem, with numbered steps and verification.
 
 - [Upload an animated GIF button](how-to/animated-gif-button.md)
 - [Pause and resume an animation](how-to/pause-animation.md)
+- [Compose multi-button image backgrounds](how-to/image-backgrounds.md)
 
 *Running commands*
 
@@ -80,7 +81,7 @@ Dry, complete, accurate. Nothing to learn here — just look it up.
 - [REST API reference](reference/api.md) — endpoints, dialect rules, status codes.
 - [Config schema reference](reference/config-schema.md) — every key the runner reads.
 - [Triggers block reference](reference/triggers.md) — the automatic-switching JSON.
-- [Parity rules P1–P18](reference/parity.md) — the frontend ↔ backend contract.
+- [Parity rules P1–P19](reference/parity.md) — the frontend ↔ backend contract.
 
 ### Explanation — understanding-oriented
 

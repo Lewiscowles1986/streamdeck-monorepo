@@ -1,4 +1,4 @@
-# Parity rules P1–P18
+# Parity rules P1–P19
 
 The frontend and backend must support every feature on both sides. The
 authoritative contract is **[docs/parity.md](../../parity.md)** — this page
@@ -7,8 +7,8 @@ indexes it. The *executable form* of the contract is
 drifted** — fix the code or update both sides deliberately (and the table)
 in the same change.
 
-Status: **2026-09-20 — all 18 rows implemented and regression-tested**
-(verified: exactly 18 rows, P1–P18, in `docs/parity.md`).
+Status: **2026-09-23 — all 19 rows implemented and regression-tested**
+(verified: exactly 19 rows, P1–P19, in `docs/parity.md`).
 
 ## The table (summarized)
 
@@ -32,6 +32,7 @@ Status: **2026-09-20 — all 18 rows implemented and regression-tested**
 | P16 | Config `triggers` blob + unconditional 5 s TriggerWatcher + crash-safe macOS probes + apply-once | `tests/test_triggers.py` (35), triggers E2E |
 | P17 | Text completion: CLI shell completion enabled; UI `CommandInput` (static binaries + history + flags + inline `{{` completion) | `tests/test_cli.py`, completion E2E specs |
 | P18 | Multi-step sequences: shared dispatch, continue-on-error default, `stopOnError`, per-step `delayMs` (cap 60000), depth cap 4, detached-counts-as-success | `tests/test_agent.py` sequence suite, E2E roundtrips |
+| P19 | Multi-button image backgrounds: `backgrounds` span list (same whole-row PUT replace semantics as `triggers`), runner composites + slices per-key tiles (own-image-wins, shared pause per span, transform-inverted tiles, purge on config swap), Backgrounds coordination page | `tests/test_backgrounds.py` (19), backgrounds roundtrip tests, demo + fullstack E2E |
 
 The full table with every test name and E2E reference lives in
 **[docs/parity.md](../../parity.md)** — read that for the fine print; this

@@ -10,6 +10,7 @@ import { ApiProvider } from "@/contexts/ApiContext";
 import Dashboard from "./pages/Dashboard";
 import Configs from "./pages/Configs";
 import ConfigEditor from "./pages/ConfigEditor";
+import Backgrounds from "./pages/Backgrounds";
 import Agents from "./pages/Agents";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
@@ -35,6 +36,8 @@ const App = () => (
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/configs" element={<Configs />} />
                   <Route path="/config/:configId" element={<ConfigEditor />} />
+                  <Route path="/config/:configId/backgrounds" element={<Backgrounds />} />
+                  <Route path="/backgrounds" element={<Backgrounds />} />
                   <Route path="/agents" element={<Agents />} />
                   <Route path="/settings" element={<Settings />} />
                   <Route path="*" element={<NotFound />} />

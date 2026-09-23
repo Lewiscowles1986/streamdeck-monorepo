@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Save, Code, Eye, Loader2 } from "lucide-react";
+import { ArrowLeft, Save, Code, Eye, Loader2, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -132,18 +132,28 @@ export default function ConfigEditor() {
             )}
           </div>
         </div>
-        <Button
-          onClick={handleSave}
-          disabled={!hasChanges || saveMutation.isPending}
-          className="glow-primary"
-        >
-          {saveMutation.isPending ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Save className="mr-2 h-4 w-4" />
-          )}
-          Save
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => navigate(`/config/${configId}/backgrounds`)}
+            data-testid="open-backgrounds"
+          >
+            <Layers className="mr-2 h-4 w-4" />
+            Backgrounds
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={!hasChanges || saveMutation.isPending}
+            className="glow-primary"
+          >
+            {saveMutation.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="mr-2 h-4 w-4" />
+            )}
+            Save
+          </Button>
+        </div>
       </div>
 
       {/* Editor Content */}
@@ -175,6 +185,7 @@ export default function ConfigEditor() {
                   buttons={config.buttons}
                   selectedIndex={selectedButtonIndex}
                   onSelectButton={handleSelectButton}
+                  backgrounds={config.backgrounds}
                 />
               </div>
             </TabsContent>

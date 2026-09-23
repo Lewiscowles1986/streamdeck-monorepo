@@ -13,7 +13,8 @@ Top level (`StreamDeckConfig`):
   "name": "My layout",
   "deviceType": "stream-deck-xl",
   "buttons": [ ButtonConfig, … ],
-  "triggers": { "app": ["Slack"], "network": {"ssid": "…"} }
+  "triggers": { "app": ["Slack"], "network": {"ssid": "…"} },
+  "backgrounds": [ BackgroundSpan, … ]
 }
 ```
 
@@ -23,6 +24,7 @@ Top level (`StreamDeckConfig`):
 | `deviceType` | kebab id | `stream-deck` · `stream-deck-mini` · `stream-deck-xl` · `stream-deck-mk2` · `stream-deck-plus` · `stream-deck-neo` · `stream-deck-pedal` · `stream-deck-studio`. Human names ("Stream Deck XL") are tolerated everywhere too — both dialects render a grid ([P9](parity.md#the-table-summarized)) |
 | `buttons` | ButtonConfig[] | Per-key entries; missing keys render blank |
 | `triggers` | object \| null | Optional; see [triggers reference](triggers.md) |
+| `backgrounds` | BackgroundSpan[] \| null | Optional; multi-button image spans — see [backgrounds](#backgrounds-p19) |
 
 Grid dimensions per type (rows × cols): original/MK.2 5×3, XL 8×4, Mini 3×2,
 Plus/Neo 4×2, Pedal 3×1, Studio 16×2; unknown types fall back to 5×3.
@@ -94,6 +96,58 @@ named faces are looked up in the package assets and `/Library/Fonts`
   otherwise the button's `action` fires.
 - The UI enforces a **minimum of two states** (remove disabled at ≤ 2) and
   badges toggle buttons on the grid.
+
+## Backgrounds (P19)
+
+An image painted across a region of key cells — one picture spanning several
+buttons, like a header banner over the top row or a full-deck hero image.
+
+```json
+{
+  "backgrounds": [
+    {
+      "id": "hero",
+      "image": "data:image/png;base64,…",
+      "x": 0,
+      "y": 0,
+      "width": 4,
+      "height": 2
+    }
+  ]
+}
+```
+
+| Key | Type | Notes |
+| --- | --- | --- |
+| `id` | string | Any stable id; defaults to `bg<index>` when omitted |
+| `image` | string | Same sources as buttons: data URI, `http(s)://` URL, or local path. Animated GIFs animate |
+| `x` / `y` | int ≥ 0 | Top-left key cell (column / row, 0-based) |
+| `width` / `height` | int ≥ 1 | Span size in cells |
+
+Runner semantics ([P19 in the parity contract](../../parity.md)):
+
+- The image is scaled to **cover** the region (aspect preserved,
+  center-cropped) and composited at native key resolution, then sliced into
+  per-key tiles — adjacent keys show adjacent crops of one canvas, so the
+  span is seamless. Tile orientation is pre-inverted against the deck's
+  per-key flip/rotation, so spans stay seamless on Original/XL/Mini/Neo.
+- **A button's own idle/pressed image always wins.** The background paints
+  only covered keys with no image of their own; a text-only key gets the tile
+  with its label drawn over it.
+- Later entries composite over earlier ones (z-order).
+- Animated backgrounds cycle at 30 fps; `pause`/`play`/`toggle-animation`
+  ([animation](#animation)) pressed on any covered key holds/resumes the
+  **whole span** (per-key pause would tear the image).
+- A key whose own image is set shows that image; `switch-config` and all other
+  actions work unchanged on covered keys.
+- Compose spans in the web UI's **Backgrounds** page (sidebar), which previews
+  the exact per-cell crop the runner paints.
+- Whole-row PUT replace semantics: a payload without `backgrounds` clears the
+  block. Malformed entries (missing image, non-numeric/negative region,
+  zero-sized) are skipped by the runner; an undecodable image renders its
+  keys blank rather than crashing the render loop.
+
+The full parity rule is [P19 in the parity contract](../../parity.md).
 
 ## Actions
 

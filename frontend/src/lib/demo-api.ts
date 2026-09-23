@@ -190,6 +190,9 @@ export const demoConfigsApi = {
       deviceType: config.deviceType ?? config.device_type ?? target.deviceType ?? target.device_type,
       buttons: config.buttons ?? target.buttons ?? [],
       triggers: config.triggers,
+      // P19: backgrounds follow the real PUT's replace semantics — a
+      // payload WITHOUT the key clears the block.
+      backgrounds: config.backgrounds,
     };
     const updated = configs.map((c) => (c.id === configId ? replaced : c));
     write(LS_CONFIGS, updated);

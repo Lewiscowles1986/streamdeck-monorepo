@@ -586,6 +586,38 @@ def test_assigned_config_drives_button_render(client, dummy_deck, monkeypatch):
     assert len(written[0]) > 0
 
 
+# ---------------------------------------------------------------
+# P19 — backgrounds round-trip through the API (whole-row PUT replace
+# semantics, same contract as the triggers block).
+# ---------------------------------------------------------------
+def test_backgrounds_roundtrip_through_real_api(client):
+    created = client.post(
+        "/config",
+        json={
+            "name": "Backgrounds Roundtrip",
+            "deviceType": "stream-deck-xl",
+            "buttons": [],
+            "backgrounds": [
+                {"id": "hero", "image": "data:image/png;base64,AAAA",
+                 "x": 0, "y": 0, "width": 2, "height": 1},
+            ],
+        },
+    ).json()
+    fetched = client.get(f"/config/{created['id']}").json()
+    assert fetched["backgrounds"][0]["id"] == "hero"
+    assert fetched["backgrounds"][0]["width"] == 2
+
+    # Whole-row PUT without a backgrounds key clears the block
+    # (replace semantics, matching triggers).
+    put = client.put(
+        f"/config/{created['id']}",
+        json={"name": "Backgrounds Roundtrip", "deviceType": "stream-deck-xl",
+              "buttons": []},
+    )
+    assert put.status_code == 200
+    assert put.json()["backgrounds"] is None
+
+
 def test_toggle_state_advances_on_press():
     """The 3-state toggle cycle: idle reads state 0, each press advances
     S0→S1→S2 and wraps back to S0; a state with only a text override still

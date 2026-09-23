@@ -268,6 +268,9 @@ def update_config(config_id: str, config: StreamDeckConfig):
         # without a triggers block clears it (replace semantics, matching
         # how buttons/name/deviceType behave).
         saved_config.triggers = config.triggers
+        # P19: backgrounds follow the same replace semantics as triggers —
+        # a payload without a backgrounds key clears the block.
+        saved_config.backgrounds = config.backgrounds
         session.commit()
         session.refresh(saved_config)
         return saved_config

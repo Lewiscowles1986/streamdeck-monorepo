@@ -46,6 +46,14 @@ persistent_image_buttons: dict[int, str] = {}
 paused_images: dict[str, bool] = {}
 config: dict = {}
 
+# P19: multi-button image backgrounds. background_frames caches the decoded
+# PIL frames of each background's source image (keyed by background id);
+# background_composites caches the full-deck composite canvas per frame so
+# each covered key crops its tile from the SAME composited frame — that is
+# what makes the span seamless. Both are purged on every config swap.
+background_frames: dict[str, list[Image.Image]] = {}
+background_composites: dict[str, list[Image.Image]] = {}
+
 
 # -------------------------
 # Cached Image Loader
@@ -248,6 +256,16 @@ def update_key_image(deck, key, state):
     btn_cfg = get_button_config(key, state)
 
     if btn_cfg.get("image") is None:
+        # P19: no image of the button's own — a background covering this
+        # key provides the pixels instead (the button's text still draws
+        # over the tile). A blank key is painted only when no background
+        # covers it either.
+        bg = _covering_background(deck, key)
+        if bg is not None:
+            source = _register_background_key(deck, key, bg[0], bg[1], btn_cfg)
+            if source is not None:
+                _update_key_background_image(deck, key, source)
+                return
         btn_cfg["image"] = BLANK_IMAGE
 
     text = btn_cfg.get("text") or ""
@@ -354,8 +372,267 @@ def _source_for_key(key: int) -> str | None:
 
 def _set_paused_for_key(key: int, paused: bool) -> None:
     source = _source_for_key(key)
-    if source is not None:
-        paused_images[source] = paused
+    if source is None:
+        return
+    bg_id = _background_id_of(source)
+    if bg_id is not None:
+        # P19: pause is SHARED per background — every tile cut from the
+        # same span holds its frame, mirroring the P13 source-keyed rule
+        # (a span freezing on one key while its siblings keep cycling
+        # would tear the image apart).
+        prefix = f"background:{bg_id}#"
+        for candidate in persistent_images:
+            if isinstance(candidate, str) and candidate.startswith(prefix):
+                paused_images[candidate] = paused
+        return
+    paused_images[source] = paused
+
+
+# -------------------------
+# Backgrounds (P19): multi-button image spans
+# -------------------------
+#
+# A config may carry a `backgrounds` list:
+#   [{"id": "hero", "image": "data:image/png;base64,...",
+#     "x": 0, "y": 0, "width": 4, "height": 2}]
+# (x, y = top-left key cell; width/height in cells; later entries composite
+# OVER earlier ones). The runner composites each image over its region at
+# native key resolution, slices the composite into per-key tiles, and paints
+# only the covered keys that have NO image of their own — a button's own
+# idle/pressed image always wins over the background underneath it.
+
+def _region_int(value) -> int | None:
+    """Coerce a background region component to a non-negative int.
+    Accepts ints and numeric strings (the schema-less JSON column means any
+    shape arrives); anything else is invalid."""
+    try:
+        coerced = int(value)
+    except (TypeError, ValueError):
+        return None
+    return coerced if coerced >= 0 else None
+
+
+def _normalized_backgrounds(cfg: dict | None) -> list[tuple[str, dict]]:
+    """The config's background entries as (id, entry) pairs, malformed
+    entries dropped. A valid entry needs an image and a fully-numeric
+    non-negative region; width/height must be at least 1 cell."""
+    entries = []
+    if not isinstance(cfg, dict):
+        return entries
+    raw = cfg.get("backgrounds")
+    if not isinstance(raw, list):
+        return entries
+    for index, bg in enumerate(raw):
+        if not isinstance(bg, dict) or not bg.get("image"):
+            continue
+        x, y = _region_int(bg.get("x")), _region_int(bg.get("y"))
+        width, height = _region_int(bg.get("width")), _region_int(bg.get("height"))
+        if None in (x, y, width, height) or width < 1 or height < 1:
+            continue
+        bg_id = str(bg.get("id") or f"bg{index}")
+        entries.append((bg_id, {**bg, "x": x, "y": y,
+                                "width": width, "height": height}))
+    return entries
+
+
+def _background_id_of(source: str) -> str | None:
+    """The background id a synthetic tile source belongs to
+    ('background:<id>#<key>'), or None for ordinary image sources."""
+    if isinstance(source, str) and source.startswith("background:"):
+        remainder = source[len("background:"):]
+        return remainder.rsplit("#", 1)[0]
+    return None
+
+
+def _covering_background(deck, key: int) -> tuple[str, dict] | None:
+    """The background entry covering ``key`` (z-order: the LAST covering
+    entry wins), or None when the key sits outside every region."""
+    try:
+        rows, cols = deck.key_layout()
+    except Exception:
+        return None
+    if cols <= 0:
+        return None
+    row, col = key // cols, key % cols
+    covering = [
+        (bg_id, bg)
+        for bg_id, bg in _normalized_backgrounds(config)
+        if bg["x"] <= col < bg["x"] + bg["width"]
+        and bg["y"] <= row < bg["y"] + bg["height"]
+    ]
+    return covering[-1] if covering else None
+
+
+def _background_frames(deck, bg_id: str, bg: dict) -> list[Image.Image] | None:
+    """Decoded PIL frames for a background's source image, cached per bg id
+    (crash-safe: an undecodable source yields None and the background is
+    skipped — one bad entry must not take down the render loop)."""
+    cached = background_frames.get(bg_id)
+    if cached is not None:
+        return cached
+    try:
+        img = load_image_from_source(bg["image"])
+        is_sequence = any([
+            getattr(img, "is_animated", False),
+            getattr(img, "n_frames", 1) > 1,
+        ])
+        frames = [frame.convert("RGB").copy() for frame in ImageSequence.Iterator(img)] \
+            if is_sequence else [img.convert("RGB")]
+    except Exception as err:
+        print(f"[RENDER] background '{bg_id}' decode failed ({err})")
+        return None
+    background_frames[bg_id] = frames
+    return frames
+
+
+def _background_composite(deck, bg_id: str, bg: dict, frames: list[Image.Image]) -> list[Image.Image] | None:
+    """Full-deck composite canvas per frame: the image scaled to COVER its
+    region (aspect preserved, center-cropped) and pasted at the region's
+    top-left cell. Cached per bg id so every covered key crops its tile from
+    the SAME composited frame — that is the seamlessness guarantee."""
+    cached = background_composites.get(bg_id)
+    if cached is not None:
+        return cached
+    try:
+        rows, cols = deck.key_layout()
+        fmt = deck.key_image_format()
+        key_w, key_h = fmt["size"]
+    except Exception as err:
+        print(f"[RENDER] background '{bg_id}' geometry failed ({err})")
+        return None
+    region_w, region_h = bg["width"] * key_w, bg["height"] * key_h
+    canvases = []
+    for frame in frames:
+        canvas = Image.new("RGB", (cols * key_w, rows * key_h), "black")
+        scale = max(region_w / frame.width, region_h / frame.height)
+        scaled = frame.resize(
+            (max(1, round(frame.width * scale)),
+             max(1, round(frame.height * scale))),
+            Image.LANCZOS,
+        )
+        left = (scaled.width - region_w) // 2
+        top = (scaled.height - region_h) // 2
+        cropped = scaled.crop((left, top, left + region_w, top + region_h))
+        # paste at the region's top-left cell (regions are validated
+        # non-negative, so no clipping is needed here).
+        canvas.paste(cropped, (bg["x"] * key_w, bg["y"] * key_h))
+        canvases.append(canvas)
+    background_composites[bg_id] = canvases
+    return canvases
+
+
+def _tile_for_key(canvas: Image.Image, deck, key: int) -> Image.Image | None:
+    """Crop the key's tile from a composite canvas and pre-apply the INVERSE
+    of the deck's per-key transform, so the native conversion (rotate + flip)
+    restores the display orientation. Without this, decks whose keys are
+    flipped/rotated (Original, XL, Mini, Neo) would show each tile rotated —
+    tearing every span on exactly the models where spans matter most."""
+    try:
+        _, cols = deck.key_layout()
+        fmt = deck.key_image_format()
+        key_w, key_h = fmt["size"]
+    except Exception:
+        return None
+    row, col = key // cols, key % cols
+    tile = canvas.crop((col * key_w, row * key_h,
+                        (col + 1) * key_w, (row + 1) * key_h))
+    rotation, flip = fmt["rotation"], fmt["flip"]
+    # _to_native_format applies rotate(θ) then flip_lr then flip_tb; the
+    # inverse applies the flips first, then the counter-rotation.
+    if flip[1]:
+        tile = tile.transpose(Image.FLIP_TOP_BOTTOM)
+    if flip[0]:
+        tile = tile.transpose(Image.FLIP_LEFT_RIGHT)
+    if rotation:
+        tile = tile.rotate(-rotation, expand=True)
+    return tile
+
+
+def _register_background_key(deck, key: int, bg_id: str, bg: dict,
+                             btn_cfg: dict) -> str | None:
+    """Decode/composite/slice a background ONCE and register this key's tile
+    cycle under the synthetic source 'background:<id>#<key>' so the existing
+    animate loop, pause machinery, and repaint paths serve it unchanged.
+    Returns the synthetic source id, or None when the background cannot
+    render (decode failure, geometry failure)."""
+    source = f"background:{bg_id}#{key}"
+    if source in persistent_images:
+        return source
+    frames = _background_frames(deck, bg_id, bg)
+    if not frames:
+        return None
+    canvases = _background_composite(deck, bg_id, bg, frames)
+    if not canvases:
+        return None
+    tiles: list[bytes] = []
+    text = btn_cfg.get("text") or ""
+    label_style = resolve_label_style(btn_cfg) if text else None
+    for canvas in canvases:
+        tile = _tile_for_key(canvas, deck, key)
+        if tile is None:
+            return None
+        if text and label_style:
+            draw = ImageDraw.Draw(tile)
+            font = ImageFont.truetype(
+                str(resolve_font_path(label_style["family"])),
+                label_style["size"],
+            )
+            draw.text(
+                (tile.width / 2, tile.height / 2),
+                text=text,
+                font=font,
+                anchor=_label_anchor(label_style["position"]),
+                fill=label_style["color"],
+            )
+        try:
+            tiles.append(PILHelper.to_native_key_format(deck, tile))
+        except Exception as err:
+            print(f"[RENDER] background '{bg_id}' tile encode failed ({err})")
+            return None
+    if not tiles:
+        return None
+    # Static sources register as plain bytes (the animate tick neither
+    # pulls nor rewrites them — same contract as static button images);
+    # animated ones register as a cycle the tick advances.
+    persistent_images[source] = (
+        itertools.cycle(tiles) if len(tiles) > 1 else tiles[0]
+    )
+    persistent_image_buttons[key] = source
+    return source
+
+
+def _purge_background_state() -> None:
+    """Drop every background-derived structure: tile cycles out of
+    persistent_images (they are keyed 'background:<id>#<key>'), the frame and
+    composite caches. Called on every config swap so a stale span never
+    repaints the new config's keys."""
+    for source in [
+        s for s in list(persistent_images)
+        if isinstance(s, str) and s.startswith("background:")
+    ]:
+        persistent_images.pop(source, None)
+        paused_images.pop(source, None)
+    background_frames.clear()
+    background_composites.clear()
+
+
+def _update_key_background_image(deck, key: int, source: str) -> None:
+    """Paint one background tile: pull the key's next frame unless the
+    background is paused (a paused span is neither pulled nor written —
+    the P13 held-frame contract, per background). Crash-safe mirror of the
+    button repaint path."""
+    image = persistent_images.get(source)
+    if image is None:
+        return
+    if isinstance(image, Iterator) and paused_images.get(source):
+        return
+    try:
+        with deck:
+            deck.set_key_image(key, next(image) if isinstance(image, Iterator) else image)
+    except TransportError:
+        raise  # deck-gone: the animate loop / runner main loop handles it
+    except Exception as err:
+        print(f"[RENDER] background repaint failed ({err}): key={key}")
 
 
 # -------------------------
@@ -560,6 +837,9 @@ def apply_config(deck, new_config) -> bool:
     config = new_config
     buttons.clear()
     paused_images.clear()
+    # P19: a stale span must never repaint the new config's keys — purge
+    # every background-derived tile cycle and cache.
+    _purge_background_state()
 
     try:
         key_count = deck.key_count()

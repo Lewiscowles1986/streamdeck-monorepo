@@ -496,3 +496,96 @@ test.describe("full-stack parity: sequence action", () => {
   });
 });
 
+// ---------------------------------------------------------------
+// P19 — multi-button image backgrounds over the real API: a span
+// composed on the Backgrounds page survives PUT /config/{id}, and
+// GET /config/{id} returns the backgrounds block the runner's tile
+// slicer consumes (id/image/x/y/width/height verbatim).
+// ---------------------------------------------------------------
+test.describe("full-stack parity: multi-button backgrounds", () => {
+  test("background span with uploaded image round-trips through the real API", async ({
+    page,
+    request,
+  }) => {
+    const configName = `Backgrounds API ${Date.now()}`;
+    await createConfigAndOpenButton1(page, configName);
+
+    // Enter the coordination page from the editor header.
+    await page.getByTestId("open-backgrounds").click();
+    await expect(
+      page.getByText(/painted across multiple buttons/i).first()
+    ).toBeVisible();
+
+    await page.getByTestId("backgrounds-config-picker").click();
+    await page.getByRole("option", { name: configName }).click();
+    await page.getByTestId("add-background").click();
+    await page.locator('input[type="file"]').setInputFiles(RED_BLUE_GIF);
+    await expect(page.getByAltText("Button preview")).toBeVisible();
+
+    // Place a 2×1 span at the top-left (x=0, y=0, width=2, height=1).
+    // The default span is 2×2 — both dimensions are set explicitly.
+    const firstCard = page.locator("[data-testid^='background-editor-']").first();
+    await firstCard.getByTestId(/^background-width-/).fill("2");
+    await firstCard.getByTestId(/^background-height-/).fill("1");
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Backgrounds saved successfully.").first()
+    ).toBeVisible();
+
+    // Structural round-trip: the span survives the real PUT/GET with its
+    // region and data URI intact (the runner's tile slicer reads exactly
+    // these fields).
+    // NOTE: the Backgrounds page lives at /config/{id}/backgrounds — the id
+    // is the SECOND-to-last segment, not the last.
+    const segments = page.url().split("/").filter(Boolean);
+    const configId = segments[segments.length - 2];
+    expect(configId, "URL must contain the config id before /backgrounds").toBeTruthy();
+    const response = await request.get(`http://localhost:8000/config/${configId}`);
+    expect(response.ok()).toBeTruthy();
+    const saved = await response.json();
+    expect(saved.backgrounds).toHaveLength(1);
+    expect(saved.backgrounds[0]).toMatchObject({
+      x: 0,
+      y: 0,
+      width: 2,
+      height: 1,
+    });
+    expect(saved.backgrounds[0].image).toMatch(/^data:image\/gif;base64,/);
+    expect(saved.backgrounds[0].id).toBeTruthy();
+  });
+
+  test("a PUT without the backgrounds key clears the block (replace semantics)", async ({
+    page,
+    request,
+  }) => {
+    const configName = `Backgrounds Clear API ${Date.now()}`;
+    await createConfigAndOpenButton1(page, configName);
+
+    await page.getByTestId("open-backgrounds").click();
+    await page.getByTestId("backgrounds-config-picker").click();
+    await page.getByRole("option", { name: configName }).click();
+    await page.getByTestId("add-background").click();
+    await page.locator('input[type="file"]').setInputFiles(RED_BLUE_GIF);
+    await expect(page.getByAltText("Button preview")).toBeVisible();
+
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByText("Backgrounds saved successfully.").first()
+    ).toBeVisible();
+
+    const segments = page.url().split("/").filter(Boolean);
+    const configId = segments[segments.length - 2];
+    expect(configId, "URL must contain the config id before /backgrounds").toBeTruthy();
+
+    // Whole-row PUT without a backgrounds key → the block clears
+    // (the same replace semantics the triggers block follows, P16).
+    const put = await request.put(`http://localhost:8000/config/${configId}`, {
+      data: { name: configName, deviceType: "stream-deck-xl", buttons: [] },
+    });
+    expect(put.ok()).toBeTruthy();
+    const cleared = await put.json();
+    expect(cleared.backgrounds ?? null).toBeNull();
+  });
+});
+
