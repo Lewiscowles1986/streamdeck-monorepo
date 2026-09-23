@@ -18,10 +18,15 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python }}
+          cache-dependency-glob: pyproject.toml
+      - name: Create venv
+        run: uv venv --python ${{ matrix.python }}
       - name: Install
-        run: uv pip install --system -e '.[dev]'
+        run: uv pip install -e '.[dev]'
+        env:
+          UV_PROJECT_ENVIRONMENT: .venv
       - name: Integration tests (dummy transport, no hardware)
-        run: python -m pytest tests -q -m 'not hardware'
+        run: .venv/bin/python -m pytest tests -q -m 'not hardware'
       - name: uvx smoke (single command usability)
         run: |
           uvx --from . streamdeck --help
@@ -53,10 +58,21 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+          cache-dependency-glob: pyproject.toml
+      - name: Install root dev deps (@playwright/test)
+        run: bun install
+        working-directory: .
+      - name: Install frontend deps
+        run: bun install
+        working-directory: frontend
+      - name: Create venv
+        run: uv venv --python 3.12
       - name: Install Python package (dev extras)
-        run: uv pip install --system -e '.[dev]'
+        run: uv pip install -e '.[dev]'
+        env:
+          UV_PROJECT_ENVIRONMENT: .venv
       - name: Build both frontend bundles
-        run: ./scripts/build-frontend.sh
+        run: bash scripts/build-frontend.sh
       - name: Install Playwright browsers
         run: bunx playwright install --with-deps chromium
       - name: Run E2E (demo-ui + full-stack with dummy device)
