@@ -103,7 +103,7 @@ model.
 | POST | `/agents` | Register an agent (**idempotent upsert** by client-generated id) | 201 |
 | DELETE | `/agents/{agent_id}` | Remove an agent | Clears any device nominations first. 200 with the deleted row / 404 |
 | PUT | `/device/{device_id}/agent/{agent_id}` | Nominate an agent for a device | 404 if either id unknown |
-| DELETE | `/device/{device_id}/agent` | Clear the device nomination | Actions fall back to local handling |
+| DELETE | `/device/{device_id}/agent` | Clear the device nomination | After this, actions execute **locally on the runner's machine** (the fallback below) |
 | GET | `/agents/{agent_id}/actions` | **Agent poll**: fetch pending actions | Marks each as `dispatched` (in the same request, serialized before the flip). 404 if agent unknown |
 | POST | `/agents/{agent_id}/actions/{action_id}/result` | Report an action result | Body: `{"status": "done"|"failed"|"detached", …}` — stored on the row |
 | POST | `/agent-actions` | Queue an action for an agent | **202**; `404` for unknown `agentId`; status forced to `pending`. Used by the device runner (and handy for curl testing) |

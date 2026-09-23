@@ -84,10 +84,13 @@ Where a press executes depends on the device's **nominated agent**:
 - **Agent nominated** ([how-to](nominate-agents.md)): the runner enqueues the
   action to the API; the nominated computer's `streamdeck agent` polls it
   down and executes there.
-- **No agent**: the action stays queued for nobody — command execution is an
-  agent-side job. (`enqueue_action` without a nomination can't resolve an
-  agent; the press logs `[ACTION] dispatch failed` instead of running
-  locally.)
+- **No agent** (or the API unreachable): the runner executes the action
+  **locally** — on the machine the runner itself runs on — through the same
+  executor the remote agent uses. Launch modes, sequences, timeouts and the
+  never-raises contract behave identically; the terminal prints
+  `[ACTION] queue dispatch unavailable … — executing locally` followed by
+  the local result status. (Before the fallback existed, this case logged
+  `[ACTION] dispatch failed` and dropped the press.)
 
 ## Verify
 

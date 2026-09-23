@@ -29,6 +29,7 @@ from .agent import (
     enqueue_action as post_agent_action,
     build_agent_action,
     expand_template_vars,
+    execute as execute_local,
 )
 from .triggers import TriggerWatcher
 
@@ -363,10 +364,16 @@ def _set_paused_for_key(key: int, paused: bool) -> None:
 def dispatch_action(deck, key, btn_action):
     """
     Execute a button action. Command and sequence actions (P18) are routed
-    to the nominated agent computer when one is set (via the API); anything
-    else is logged for the operator. Template variables the web UI can
-    insert are expanded with the runtime context known at press time
-    (button index, device id, toggle state, config name).
+    to the nominated agent computer when one is set (via the API); with no
+    nomination, the action executes LOCALLY on this machine — the runner
+    runs on a computer, and the API reference documents this fallback
+    ('clear the nomination → actions fall back to local handling'). Local
+    execution goes through the same executor the remote agent uses
+    (agent.execute), so launch modes, sequences, timeouts and the
+    never-raises contract behave identically in both paths. Template
+    variables the web UI can insert are expanded with the runtime context
+    known at press time (button index, device id, toggle state, config
+    name).
 
     Sequences are dict-only (no bare-string form) — they carry a steps
     payload, which a bare string cannot hold.
@@ -385,15 +392,20 @@ def dispatch_action(deck, key, btn_action):
         "toggle_state": key_state.get("state", 0),
         "config_name": config.get("name", ""),
     }
-    action = build_agent_action(
-        action=expand_template_vars(btn_action, context),
-        device_id=device_id,
-        button_index=key,
-    )
+    action = expand_template_vars(btn_action, context)
     try:
-        post_agent_action(action)
-    except Exception as err:  # keep the runner alive when no API is running
-        print(f"[ACTION] dispatch failed ({err}): {btn_action}")
+        post_agent_action(build_agent_action(
+            action=action, device_id=device_id, button_index=key
+        ))
+    except Exception as err:
+        # No nominated agent (404 Agent not found) or the API is down:
+        # fall back to executing the action on THIS machine instead of
+        # dropping the press. The executor never raises, so the runner
+        # keeps the same crash-safety contract either way.
+        print(f"[ACTION] queue dispatch unavailable ({err}) — executing locally")
+        local = execute_local(action, context)
+        print(f"[ACTION] local execution: {local.get('status')}"
+              + (f" (pid {local['pid']})" if "pid" in local else ""))
 
 
 # -------------------------
