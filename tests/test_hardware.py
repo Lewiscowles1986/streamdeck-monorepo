@@ -61,8 +61,57 @@ def test_brightness_roundtrip(real_deck):
     real_deck.set_brightness(30)
 
 
-def test_full_stack_with_hardware(client, real_deck):
-    """API + real device: /devices must report the attached deck connected."""
-    devices = client.get("/devices").json()
-    serials = {d["id"] for d in devices}
-    assert real_deck.get_serial_number() in serials
+@pytest.fixture()
+def hw_client(tmp_path, monkeypatch):
+    """FastAPI TestClient wired to a temp DB + the REAL transport.
+
+    The shared `client` fixture pins the dummy transport (right for the
+    no-hardware suite) but makes /devices structurally unable to report a
+    real serial. This suite therefore carries its own client: same temp-DB
+    + model setup as the shared one, but the transport env var is CLEARED
+    so get_device_manager() probes real transports.
+    """
+    db_file = tmp_path / "hw-test-streamdeck.db"
+    monkeypatch.setenv("STREAMDECK_DB", str(db_file))
+    monkeypatch.delenv("STREAMDECK_TRANSPORT", raising=False)
+    import importlib
+
+    from streamdeck import db
+
+    importlib.reload(db)
+    engine = db.engine
+
+    from sqlmodel import SQLModel
+
+    from streamdeck.models import StreamDeckConfig, StreamDeckDevice  # noqa: F401
+
+    SQLModel.metadata.create_all(engine)
+
+    from fastapi.testclient import TestClient
+
+    from streamdeck.app import app
+
+    with TestClient(app) as test_client:
+        yield test_client
+    engine.dispose()
+
+
+def test_full_stack_with_hardware(hw_client, real_deck):
+    """API + real device: /devices must report the attached deck connected.
+
+    macOS HID opens are EXCLUSIVE: while `real_deck` holds the device, the
+    API's own open fails ('exclusive access and device already open' —
+    proved with a ctypes hidapi probe). Release the deck across the API's
+    enumerate window (get_device_metadata opens+closes per deck), then
+    take it back.
+    """
+    serial = real_deck.get_serial_number()
+    real_deck.close()
+    try:
+        devices = hw_client.get("/devices").json()
+        by_id = {d["id"]: d for d in devices}
+    finally:
+        real_deck.open()
+
+    assert serial in by_id, f"real deck {serial} missing from /devices"
+    assert by_id[serial]["connected"] is True
