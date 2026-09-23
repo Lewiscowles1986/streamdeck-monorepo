@@ -51,6 +51,11 @@ uvx . streamdeck serve
 STREAMDECK_TRANSPORT=dummy uvx . streamdeck serve
 ```
 
+> Plugged-in hardware on **macOS** needs one extra dependency
+> (`brew install hidapi`) before the deck will enumerate — see
+> [Test a real Stream Deck](../how-to/real-hardware.md) for the full
+> real-hardware path. This tutorial continues hardware-free.
+
 You should see uvicorn boot and end with something like:
 
 ```text

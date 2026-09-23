@@ -63,6 +63,10 @@ Each guide solves one concrete problem, with numbered steps and verification.
 
 - [Nominate an agent computer](how-to/nominate-agents.md)
 
+*Real hardware*
+
+- [Test a real Stream Deck](how-to/real-hardware.md)
+
 *Developer workflows*
 
 - [Use shell completion and input autocomplete](how-to/completion.md)

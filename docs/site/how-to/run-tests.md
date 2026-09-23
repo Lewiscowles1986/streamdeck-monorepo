@@ -25,7 +25,8 @@ paths), and the demo E2E runs entirely in-browser.
 ```
 
 Expect **146 passed, 5 deselected** (the hardware smoke tests; opt in with
-`-m hardware` against a real deck).
+`-m hardware` against a real deck — prerequisites like macOS's
+`brew install hidapi` are in [Test a real Stream Deck](real-hardware.md)).
 
 | File | Covers |
 | --- | --- |

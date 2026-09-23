@@ -30,6 +30,13 @@ the [tutorials](../tutorials/index.md) instead.
 - **[Nominate an agent computer](nominate-agents.md)** — register a machine
   with `streamdeck agent` and point a device at it.
 
+## Real hardware
+
+- **[Test a real Stream Deck](real-hardware.md)** — the HID backend
+  (`brew install hidapi` on macOS), enumerate + smoke suite, driving the
+  runner live, and a manual exploratory pass (GIF, pause, toggle,
+  switch-config) on the physical keys.
+
 ## Developer workflows
 
 - **[Use shell completion and input autocomplete](completion.md)** — CLI

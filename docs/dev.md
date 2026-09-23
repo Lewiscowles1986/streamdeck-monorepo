@@ -29,7 +29,7 @@ scripts/build-frontend.sh             # builds dist (full-stack) + dist-demo (of
 | `uvx . streamdeck run` | device runner only |
 | `uvx . streamdeck agent` | agent loop for this machine |
 | `.venv/bin/python -m pytest tests` | integration suite (dummy transport) |
-| `.venv/bin/python -m pytest -m hardware tests/test_hardware.py` | hardware smoke tests (opt-in) |
+| `.venv/bin/python -m pytest -m hardware tests/test_hardware.py` | hardware smoke tests (opt-in; needs hidapi — see [the real-hardware guide](site/how-to/real-hardware.md)) |
 | `.venv/bin/npx playwright test --project=demo-ui` | UI-only E2E (no backend) |
 | `.venv/bin/npx playwright test --project=full-stack` | full-stack E2E (dummy device) |
 
