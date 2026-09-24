@@ -15,18 +15,22 @@ jobs:
         python: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v5
+        with:
           cache-dependency-glob: pyproject.toml
-      - name: Create venv
-        run: uv venv --python ${{ matrix.python }}
+          cache-suffix: "${{ matrix.os }}-${{ matrix.python }}"
       - name: Install
         run: uv pip install -e '.[dev]'
         env:
-          UV_PROJECT_ENVIRONMENT: .venv
+          # Env-var form of --system: install into the setup-python
+          # interpreter (toolcache Pythons carry no EXTERNALLY-MANAGED
+          # marker, unlike uv-managed or distro Pythons).
+          UV_SYSTEM_PYTHON: "true"
       - name: Integration tests (dummy transport, no hardware)
-        run: .venv/bin/python -m pytest tests -q -m 'not hardware'
+        run: python -m pytest tests -q -m 'not hardware'
       - name: uvx smoke (single command usability)
         run: |
           uvx --from . streamdeck --help
@@ -54,23 +58,27 @@ jobs:
     needs: [frontend, python-tests]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: oven-sh/setup-bun@v2
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
           cache-dependency-glob: pyproject.toml
+          cache-suffix: e2e
       - name: Install root dev deps (@playwright/test)
         run: bun install
         working-directory: .
       - name: Install frontend deps
         run: bun install
         working-directory: frontend
-      - name: Create venv
-        run: uv venv --python 3.12
+      # The only venv in this workflow: playwright.config.ts webServers
+      # hardcode ${ROOT}/.venv/bin/python. Built with the stdlib from the
+      # setup-python interpreter — no uv-managed Python involved.
+      - name: Create venv (playwright.config.ts expects .venv)
+        run: python -m venv .venv
       - name: Install Python package (dev extras)
-        run: uv pip install -e '.[dev]'
-        env:
-          UV_PROJECT_ENVIRONMENT: .venv
+        run: uv pip install --python .venv/bin/python -e '.[dev]'
       - name: Build both frontend bundles
         run: bash scripts/build-frontend.sh
       - name: Install Playwright browsers
