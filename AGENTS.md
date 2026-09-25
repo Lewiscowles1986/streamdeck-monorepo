@@ -118,6 +118,35 @@ root**, and the E2E specs in `e2e/`.
 - **Hardware tests are opt-in** (`pytest -m hardware`, `tests/test_hardware.py`,
   `scripts/hardware-smoke.sh`). Never let them run in default suites/CI.
 
+### Environment-dependent tests (green locally, red in CI)
+
+Twice, a suite passed on this Mac and failed on CI for reasons that had nothing
+to do with the code. Both classes are cheap to prevent:
+
+- **Strip ANSI before asserting on CLI output.** Rich colourises `--help`
+  whenever a colour env is present, and CI sets one, so `--install-completion`
+  arrives wrapped (`"\x1b[1m--install-completion\x1b[0m"`) and a literal `in`
+  assertion fails. Assert against `re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", out)`
+  — tests should pin content, not Rich's colour decisions. Reproduce with
+  `FORCE_COLOR=1 .venv/bin/python -m pytest tests/test_cli.py`.
+- **Force the platform gate when testing macOS-only logic.** `get_frontmost_app`
+  / `get_wifi_ssid` return `None` on non-macOS *before* touching `subprocess`,
+  so on the Linux runner a patched `subprocess.run` never fires: tests pass for
+  the wrong reason, or raise `KeyError` when they read state the mock should
+  have set (`tests/test_triggers.py` has an `on_macos` fixture for this). Keep
+  the genuine non-macOS contract as its own test — "returns None **and spawns
+  nothing**" — so the gate is pinned in both directions.
+- **Reproduce under CI conditions before trusting a green local run.** If
+  behaviour depends on an env var, terminal, or OS, a local pass proves nothing
+  about CI. Cheapest habit: run the suite once with the CI-ish env
+  (`FORCE_COLOR=1`, and think about which branches are platform-gated).
+- **When CI is red and you can't read the log, publish the failure instead.**
+  GitHub job **logs** need a sign-in; the **step summary** and `::error`
+  annotations do not. Piping pytest to a file and writing the `FAILED`/`E`
+  lines to `$GITHUB_STEP_SUMMARY` (as `.github/workflows/ci.yml` now does) makes
+  any red run readable without credentials. Guessing at an unreadable failure
+  costs far more than five lines of workflow.
+
 ### Editing discipline (mistakes that cost debugging time)
 
 - One file edit left **old and new fragments interleaved**, corrupting
@@ -159,6 +188,8 @@ root**, and the E2E specs in `e2e/`.
 ## Gotchas checklist before you finish a change
 
 - [ ] `pytest tests -m 'not hardware'` green
+- [ ] Suite also green under `FORCE_COLOR=1` if it asserts on CLI stdout, and
+      macOS-only logic was tested with the platform gate forced (not the host OS)
 - [ ] Both frontend bundles rebuilt if frontend changed (`./scripts/build-frontend.sh`)
 - [ ] `bunx playwright test` green (run from repo root)
 - [ ] `uvx --from . streamdeck --help` / `version` / dummy `list-devices` still work
