@@ -26,6 +26,8 @@ import subprocess
 import threading
 import time
 
+import pytest
+
 from streamdeck import runner
 from streamdeck import triggers as tmod
 from streamdeck.triggers import (
@@ -146,7 +148,17 @@ def _patch_run(monkeypatch, behavior):
     monkeypatch.setattr(tmod.subprocess, "run", fake_run)
 
 
-def test_get_frontmost_app_success(monkeypatch):
+# Both probes return None on non-macOS BEFORE they touch subprocess, so on a
+# Linux runner the mocked run is never called and these tests collapse into
+# "returns None for the wrong reason" (the argv-capture one raised
+# KeyError: 'argv'). Force the platform gate for the parsing tests so they
+# pin the PARSER on every OS; the genuine non-macOS path keeps its own test.
+@pytest.fixture()
+def on_macos(monkeypatch):
+    monkeypatch.setattr(tmod, "_on_macos", lambda: True)
+
+
+def test_get_frontmost_app_success(monkeypatch, on_macos):
     _patch_run(
         monkeypatch,
         lambda argv, timeout: FakeCompleted("Slack\n"),
@@ -154,33 +166,33 @@ def test_get_frontmost_app_success(monkeypatch):
     assert get_frontmost_app() == "Slack"
 
 
-def test_get_frontmost_app_strips_and_handles_empty(monkeypatch):
+def test_get_frontmost_app_strips_and_handles_empty(monkeypatch, on_macos):
     _patch_run(monkeypatch, lambda argv, timeout: FakeCompleted("  \n"))
     assert get_frontmost_app() is None
 
 
-def test_get_frontmost_app_timeout_returns_none(monkeypatch):
+def test_get_frontmost_app_timeout_returns_none(monkeypatch, on_macos):
     def slow(argv, timeout):
         raise subprocess.TimeoutExpired(cmd=argv, timeout=timeout)
     _patch_run(monkeypatch, slow)
     assert get_frontmost_app() is None
 
 
-def test_get_frontmost_app_called_process_error_returns_none(monkeypatch):
+def test_get_frontmost_app_called_process_error_returns_none(monkeypatch, on_macos):
     def fail(argv, timeout):
         raise subprocess.CalledProcessError(returncode=1, cmd=argv)
     _patch_run(monkeypatch, fail)
     assert get_frontmost_app() is None
 
 
-def test_get_frontmost_app_garbage_stdout_returns_none(monkeypatch):
+def test_get_frontmost_app_garbage_stdout_returns_none(monkeypatch, on_macos):
     # A multi-line / binary-ish mess must not crash the parser.
     _patch_run(monkeypatch, lambda argv, timeout: FakeCompleted("a\nb\nc\n"))
     result = get_frontmost_app()
     assert result is None or isinstance(result, str)
 
 
-def test_get_wifi_ssid_success(monkeypatch):
+def test_get_wifi_ssid_success(monkeypatch, on_macos):
     """ipconfig getsummary output contains an ' SSID : name' line."""
     output = (
         "last message received: 12345\n"
@@ -191,26 +203,26 @@ def test_get_wifi_ssid_success(monkeypatch):
     assert get_wifi_ssid() == "HomeWifi_5G"
 
 
-def test_get_wifi_ssid_no_ssid_line_returns_none(monkeypatch):
+def test_get_wifi_ssid_no_ssid_line_returns_none(monkeypatch, on_macos):
     _patch_run(monkeypatch, lambda argv, timeout: FakeCompleted("nothing here\n"))
     assert get_wifi_ssid() is None
 
 
-def test_get_wifi_ssid_timeout_returns_none(monkeypatch):
+def test_get_wifi_ssid_timeout_returns_none(monkeypatch, on_macos):
     def slow(argv, timeout):
         raise subprocess.TimeoutExpired(cmd=argv, timeout=timeout)
     _patch_run(monkeypatch, slow)
     assert get_wifi_ssid() is None
 
 
-def test_get_wifi_ssid_called_process_error_returns_none(monkeypatch):
+def test_get_wifi_ssid_called_process_error_returns_none(monkeypatch, on_macos):
     def fail(argv, timeout):
         raise subprocess.CalledProcessError(returncode=1, cmd=argv)
     _patch_run(monkeypatch, fail)
     assert get_wifi_ssid() is None
 
 
-def test_get_wifi_ssid_passes_interface(monkeypatch):
+def test_get_wifi_ssid_passes_interface(monkeypatch, on_macos):
     seen: dict = {}
 
     def behavior(argv, timeout):
@@ -220,6 +232,20 @@ def test_get_wifi_ssid_passes_interface(monkeypatch):
     _patch_run(monkeypatch, behavior)
     get_wifi_ssid(interface="en1")
     assert any("en1" in str(part) for part in seen["argv"])
+
+
+def test_probes_return_none_off_macos_without_spawning(monkeypatch):
+    """The real non-macOS contract: both probes answer None and never shell
+    out. Asserted against the platform gate itself rather than the host OS,
+    so this has teeth on macOS too (where _on_macos() is genuinely true)."""
+    monkeypatch.setattr(tmod, "_on_macos", lambda: False)
+    calls: list = []
+    monkeypatch.setattr(
+        tmod.subprocess, "run", lambda *a, **k: calls.append(a) or FakeCompleted("X\n")
+    )
+    assert get_frontmost_app() is None
+    assert get_wifi_ssid() is None
+    assert calls == [], "an off-macOS probe must not exec a subprocess"
 
 
 # ---------------------------------------------------------------

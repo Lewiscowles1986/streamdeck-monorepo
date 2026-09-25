@@ -10,11 +10,25 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
 
 import pytest
+
+# --help is colourised by Rich whenever it thinks it is on a terminal, and
+# GitHub Actions sets a colour env, so option names arrive wrapped in SGR
+# sequences ("\x1b[1m--show-completion\x1b[0m"). These tests pin the CLI's
+# CONTENT, not Rich's colour decisions, so styling is stripped before every
+# assertion. Without this the suite passes on a plain local shell and fails
+# on CI purely on colour.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _plain(text: str) -> str:
+    """Text with ANSI/CSI escape sequences removed."""
+    return _ANSI_ESCAPE.sub("", text)
 
 
 def run_cli(*args: str, timeout: float = 15.0) -> subprocess.CompletedProcess:
@@ -31,16 +45,18 @@ def test_help_advertises_shell_completion():
     """Typer's built-in completion options must be present on the top level."""
     result = run_cli("--help")
     assert result.returncode == 0, result.stderr
-    assert "--install-completion" in result.stdout
-    assert "--show-completion" in result.stdout
+    out = _plain(result.stdout)
+    assert "--install-completion" in out
+    assert "--show-completion" in out
 
 
 def test_help_lists_documented_commands():
     """Every command README/roadmap documents must appear in --help."""
     result = run_cli("--help")
     assert result.returncode == 0, result.stderr
+    out = _plain(result.stdout)
     for command in ("serve", "list-devices", "run", "agent", "demo", "ui", "version"):
-        assert command in result.stdout
+        assert command in out
 
 
 def test_help_completes_quickly():
@@ -79,4 +95,4 @@ def test_completion_options_exist_on_every_command_path(command):
     """Completion is a top-level option; the app object must keep it enabled."""
     result = run_cli("--help")
     assert result.returncode == 0, result.stderr
-    assert command in result.stdout
+    assert command in _plain(result.stdout)
