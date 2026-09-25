@@ -5,32 +5,28 @@ on:
     branches: [main]
   pull_request:
 
+# ONE tool owns the environment: astral-sh/setup-uv installs the Python and
+# creates `.venv`; every step then addresses that venv by path.
+#
+# The previous shape split ownership (actions/setup-python supplied the
+# interpreter, setup-uv was told to supply uv only, install was redirected
+# with UV_SYSTEM_PYTHON) and broke on the seams three runs in a row. Calling
+# `uv venv` by hand also collided with the venv setup-uv already makes.
+# Neither of those is possible in the shape below: there is exactly one
+# interpreter, one venv, and no ambient-Python invocation anywhere.
 jobs:
-  python-tests:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python: ["3.10", "3.12"]
+  python:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
+      - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: "3.12"
           cache-dependency-glob: pyproject.toml
-          cache-suffix: "${{ matrix.os }}-${{ matrix.python }}"
-      - name: Install
-        run: uv pip install -e '.[dev]'
-        env:
-          # Env-var form of --system: install into the setup-python
-          # interpreter (toolcache Pythons carry no EXTERNALLY-MANAGED
-          # marker, unlike uv-managed or distro Pythons).
-          UV_SYSTEM_PYTHON: "true"
+      - name: Install into .venv (the venv setup-uv just created)
+        run: uv pip install --python .venv/bin/python -e '.[dev]'
       - name: Integration tests (dummy transport, no hardware)
-        run: python -m pytest tests -q -m 'not hardware'
+        run: .venv/bin/python -m pytest tests -q -m 'not hardware'
       - name: uvx smoke (single command usability)
         run: |
           uvx --from . streamdeck --help
@@ -43,7 +39,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bun run lint
@@ -55,28 +51,22 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    needs: [frontend, python-tests]
+    needs: [frontend, python]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
+      # Same single owner: setup-uv makes the Python AND the .venv that
+      # playwright.config.ts webServers expect at ${ROOT}/.venv/bin/python.
       - uses: astral-sh/setup-uv@v5
         with:
+          python-version: "3.12"
           cache-dependency-glob: pyproject.toml
-          cache-suffix: e2e
       - name: Install root dev deps (@playwright/test)
         run: bun install
         working-directory: .
       - name: Install frontend deps
         run: bun install
         working-directory: frontend
-      # The only venv in this workflow: playwright.config.ts webServers
-      # hardcode ${ROOT}/.venv/bin/python. Built with the stdlib from the
-      # setup-python interpreter — no uv-managed Python involved.
-      - name: Create venv (playwright.config.ts expects .venv)
-        run: python -m venv .venv
       - name: Install Python package (dev extras)
         run: uv pip install --python .venv/bin/python -e '.[dev]'
       - name: Build both frontend bundles
