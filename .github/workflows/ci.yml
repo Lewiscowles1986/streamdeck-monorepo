@@ -26,16 +26,19 @@ jobs:
       - name: Install into .venv (the venv setup-uv just created)
         run: uv pip install --python .venv/bin/python -e '.[dev]'
       - name: Integration tests (dummy transport, no hardware)
-        # CI job logs are gated behind a GitHub sign-in; the step summary and
-        # ::error annotations are not. Republish the failure in both so a red
-        # run is readable to anyone. Exit status is still pytest's own.
+        # JUnit XML -> ::error annotations (inline on the file + Checks tab)
+        # and a Markdown job summary, so a failure is readable without going
+        # into the log — which on a private repo needs a GitHub sign-in. The
+        # reporting script always exits 0; pytest's own status is what this
+        # step returns, so a failure stays a failure.
         run: |
           set +e
-          .venv/bin/python -m pytest tests -q -m 'not hardware' -rf > /tmp/p.log 2>&1
+          .venv/bin/python -m pytest tests -q -m 'not hardware' \
+            --junit-xml=/tmp/junit.xml -rf > /tmp/pytest.log 2>&1
           ret=$?
-          tail -n 25 /tmp/p.log
-          { echo '### pytest'; echo '```'; grep -E '^(FAILED|ERROR)|^E ' /tmp/p.log | head -40; tail -n 25 /tmp/p.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          [ "$ret" -eq 0 ] || echo "::error title=pytest failures::$(grep -E '^(FAILED|ERROR)|^E ' /tmp/p.log | head -25 | tr '\n' '|' | tr -d '%')"
+          tail -n 25 /tmp/pytest.log
+          .venv/bin/python scripts/pytest-summary.py /tmp/junit.xml \
+            --pytest-log /tmp/pytest.log
           exit "$ret"
       - name: uvx smoke (single command usability)
         run: |
@@ -84,10 +87,17 @@ jobs:
       - name: Install Playwright browsers
         run: bunx playwright install --with-deps chromium
       - name: Run E2E (demo-ui + full-stack with dummy device)
-        run: bunx playwright test
+        # Playwright's built-in `github` reporter emits ::error annotations
+        # with file/line for each failed spec. `html` gives the browsable
+        # report that the artifact upload below already expects.
+        run: bunx playwright test --reporter=github,html
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: playwright-results
-          path: test-results/
+          # test-results holds traces/screenshots; playwright-report is the
+          # browsable HTML report produced by the `html` reporter above.
+          path: |
+            test-results/
+            playwright-report/
           retention-days: 7
