@@ -26,7 +26,30 @@ jobs:
       - name: Install into .venv (the venv setup-uv just created)
         run: uv pip install --python .venv/bin/python -e '.[dev]'
       - name: Integration tests (dummy transport, no hardware)
-        run: .venv/bin/python -m pytest tests -q -m 'not hardware'
+        # The suite is green locally but red here, and this job's log is
+        # behind a GitHub sign-in. Publish the failure itself: the summary
+        # and the annotation are readable without authentication, unlike
+        # the log body. Remove once CI is green.
+        run: |
+          set +e
+          .venv/bin/python -m pytest tests -q -m 'not hardware' -rf > /tmp/pytest.log 2>&1
+          ret=$?
+          tail -n 60 /tmp/pytest.log
+          {
+            echo '### pytest failures'
+            echo '```'
+            grep -E '^(FAILED|ERROR)|^E  |^tests/.*:[0-9]+' /tmp/pytest.log | head -60
+            echo '```'
+            echo '### last 40 lines'
+            echo '```'
+            tail -n 40 /tmp/pytest.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$ret" -ne 0 ]; then
+            msg=$(grep -E '^(FAILED|ERROR)|^E  ' /tmp/pytest.log | head -30 | tr '\n' '|' | tr -d '%')
+            echo "::error title=pytest failures::${msg}"
+          fi
+          exit "$ret"
       - name: uvx smoke (single command usability)
         run: |
           uvx --from . streamdeck --help
