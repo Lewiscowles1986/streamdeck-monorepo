@@ -160,6 +160,12 @@ to do with the code. Both classes are cheap to prevent:
   be cleaned up before anything could pass. Write it right the first time.
 - Prefer the file-editing tools over shell heredocs (`cat > file <<'EOF'`) —
   heredoc writes bypass review of diffs and are harder to undo.
+- **Verify a multi-line shell block by running it verbatim, not by retyping
+  it.** A `run: |` block in `ci.yml` was checked by re-typing it into a local
+  shell, where the retyping mangled the quoting and reported a `syntax error`
+  that the YAML did not have. Parse the workflow, write the step's `run` string
+  to a file, and execute *that* — a test of your transcription is not a test of
+  the block.
 
 ## Working agreements that worked
 
